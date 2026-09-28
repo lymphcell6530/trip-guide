@@ -176,7 +176,7 @@ async function search(label, arrived = false) {
   const wiki = [...wikiZh];
   for (const w of wikiLocal) {
     if (wiki.some((z) => nameMatch(z.title, w.zhTitle || w.title))) continue;
-    wiki.push(w.zhTitle ? { ...w, title: w.zhTitle, lang: 'zh', extract: null } : w);
+    wiki.push(w.zhTitle ? { ...w, title: w.zhTitle, lang: 'zh', extract: null, desc: null } : w);
   }
   S.wikiNearby = wiki;
   // Google 景點優先；維基百科上有、但 Google 沒列到的歷史條目也補進來

@@ -11,8 +11,8 @@ App 會持續讀取 GPS。你離開上次搜尋的位置超過設定距離（預
 
 ## 第一次使用：申請 Google Maps 金鑰
 1. 到 https://console.cloud.google.com/ 建立專案並綁定帳單（Google 每月有免費額度）
-2. 在「API 和服務 → 程式庫」啟用：**Maps JavaScript API**、**Places API (New)**、**Routes API**、**Geocoding API**
-3. 在「憑證」建立 API 金鑰，並在「應用程式限制」選 **HTTP 參照網址**，填入你部署的網址（例如 `https://你的網域/*`），避免金鑰被別人盜用
+2. 在「API 和服務 → 程式庫」啟用：**Maps JavaScript API**、**Places API (New)**、**Routes API**、**Geocoding API**，建議再加 **Cloud Translation API**（日本景點的故事自動翻成中文）
+3. 在「憑證」建立 API 金鑰，並在「應用程式限制」選 **HTTP 參照網址**，填入你部署的網址（`https://lymphcell6530.github.io/*`），避免金鑰被別人盜用
 4. 打開 App，按右上角 ⚙️ 貼上金鑰
 
 沒有金鑰也能先用：歷史景點會只用維基百科的附近條目，但沒有地圖、美食和路線時間。
@@ -23,9 +23,20 @@ python -m http.server 8080
 ```
 然後打開 http://localhost:8080/?lat=22.9975&lng=120.2025 （網址帶 lat/lng 參數可以模擬你人在某個地方，這個例子是台南赤崁樓）
 
-## 放到手機上
-手機的 GPS 定位只能在 **HTTPS** 網址下使用，所以要把這個資料夾部署到 Firebase Hosting、GitHub Pages 或 Netlify 之類的地方。
-用手機瀏覽器打開網址後，選「加入主畫面」，它就會像一般 App 一樣出現在桌面上。
+## 放到手機上（已部署）
+網址：**https://lymphcell6530.github.io/trip-guide/** （GitHub Pages，手機用行動網路就能開）
+
+1. 在電腦打開上面的網址 → ⚙️ 貼上金鑰 → 按「📱 用手機掃描」產生 QR code
+2. 手機相機掃 QR code，金鑰會自動存進手機（QR code 裡的金鑰放在 `#` 後面，不會送到伺服器）
+3. iPhone 用 Safari：分享 → 加入主畫面；Android 用 Chrome：選單 → 安裝應用程式／加到主畫面
+
+之後改了程式，只要 `git push`，GitHub Pages 大約一分鐘就會更新。
+
+## 日本（及其他國家）
+會自動判斷你在哪個國家。在日本時：
+- 景點：同時查中文與日文維基百科，有中文版就用中文（自動轉成繁體），只有日文版的會用 Google 自動翻譯（需啟用 Cloud Translation API），沒啟用就提供「用 Google 翻譯」的連結
+- 美食價錢會用日圓顯示，評論裡的「円」價格也會抓出來
+- 大眾運輸時間用 Google 的日本電車／巴士資料
 
 > 限制：網頁 App 在螢幕關閉或切到背景時，瀏覽器通常會暫停定位，所以「自動偵測到新定點」在 App 開在前景時最可靠。如果要鎖屏也能在背景偵測，就得改寫成原生 App（例如用 Capacitor 包裝，並加上背景定位外掛）。
 
