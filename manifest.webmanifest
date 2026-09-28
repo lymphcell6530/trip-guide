@@ -1,0 +1,13 @@
+{
+  "name": "旅途即時導覽",
+  "short_name": "旅途導覽",
+  "description": "到了一個地方，自動告訴你附近的歷史景點、故事、美食與怎麼去",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f6f7f5",
+  "theme_color": "#0f766e",
+  "lang": "zh-Hant-TW",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

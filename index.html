@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <title>旅途即時導覽</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🧭 旅途即時導覽</div>
+    <div class="top-actions">
+      <button id="btnAuto" class="chip" title="到定點後自動搜尋">自動：開</button>
+      <button id="btnLocate" class="icon-btn" title="用目前位置搜尋">📍</button>
+      <button id="btnSettings" class="icon-btn" title="設定">⚙️</button>
+    </div>
+  </header>
+
+  <div id="status" class="status">正在取得你的位置…</div>
+
+  <main class="layout">
+    <section class="map-wrap">
+      <div id="map"></div>
+      <div class="map-hint">長按／點地圖可把「目前位置」改到那裡（規劃行程用）</div>
+    </section>
+
+    <section class="panel">
+      <nav class="tabs">
+        <button class="tab active" data-tab="sights">🏯 歷史景點</button>
+        <button class="tab" data-tab="food">🍜 在地美食</button>
+        <button class="tab" data-tab="route" id="tabRoute" disabled>🚶 怎麼去</button>
+      </nav>
+
+      <div class="filters" id="filters">
+        <label>範圍
+          <select id="radius">
+            <option value="800">800 公尺</option>
+            <option value="1500" selected>1.5 公里</option>
+            <option value="3000">3 公里</option>
+            <option value="8000">8 公里</option>
+          </select>
+        </label>
+        <button id="btnRefresh" class="chip">重新搜尋</button>
+      </div>
+
+      <div id="list-sights" class="list"></div>
+      <div id="list-food" class="list hidden"></div>
+      <div id="route-view" class="list hidden"></div>
+    </section>
+  </main>
+
+  <dialog id="settings">
+    <form method="dialog" class="settings-form">
+      <h2>設定</h2>
+      <label>Google Maps API 金鑰
+        <input id="apiKey" type="text" placeholder="AIza…" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="small">需在 Google Cloud 啟用：<b>Maps JavaScript API</b>、<b>Places API (New)</b>、<b>Routes API</b>、<b>Geocoding API</b>（建議再加 <b>Cloud Translation API</b>，日本景點的日文故事會自動翻成中文）。金鑰只存在這台裝置的瀏覽器裡。</p>
+      <button type="button" id="btnPhone" class="chip">📱 用手機掃描，把設定帶到手機</button>
+      <div id="qrBox" class="qr hidden"></div>
+      <label>自動搜尋：移動多遠後、停留多久才算「到新定點」
+        <div class="row">
+          <select id="moveThreshold">
+            <option value="300">300 公尺</option>
+            <option value="500" selected>500 公尺</option>
+            <option value="1000">1 公里</option>
+          </select>
+          <select id="dwellSeconds">
+            <option value="30">停 30 秒</option>
+            <option value="90" selected>停 1.5 分鐘</option>
+            <option value="180">停 3 分鐘</option>
+          </select>
+        </div>
+      </label>
+      <label class="check"><input id="notify" type="checkbox"> 到新定點時跳通知</label>
+      <div class="row end">
+        <button value="cancel" class="chip">取消</button>
+        <button id="saveSettings" value="save" class="chip primary">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
