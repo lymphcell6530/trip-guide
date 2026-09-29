@@ -772,11 +772,16 @@ async function transitOptions(dest) {
     const fareNum = f ? Number(f.units || 0) + Number(f.nanos || 0) / 1e9 : null;
     const cur = f?.currencyCode;
     const sym = cur === 'TWD' ? 'NT$' : cur === 'JPY' ? '¥' : cur ? `${cur} ` : '';
+    const lastT = transits[transits.length - 1];
+    const walkAfter = segs[segs.length - 1]?.type === 'walk' && segs.length > 1 ? segs[segs.length - 1].sec : 0;
+    const leaveBy = first?.dep ? new Date(first.dep.getTime() - walkBefore * 1000) : null;
+    const arrive = lastT?.arr ? new Date(lastT.arr.getTime() + walkAfter * 1000) : new Date(now + secs(rt.duration) * 1000);
     return {
-      sec: secs(rt.duration),
+      sec: leaveBy ? Math.round((arrive - leaveBy) / 1000) : secs(rt.duration),
       meters: rt.distanceMeters,
-      arrive: new Date(now + secs(rt.duration) * 1000),
-      leaveBy: first?.dep ? new Date(first.dep.getTime() - walkBefore * 1000) : null,
+      arrive,
+      leaveBy,
+      key: transits.map((g) => `${g.line}@${g.from}>${g.to}`).join('|') || 'walk',
       fare: rt.localizedValues?.transitFare?.text || (fareNum ? `${sym}${fareNum}` : null),
       transfers: Math.max(0, transits.length - 1),
       walkSec: segs.filter((g) => g.type === 'walk').reduce((a, g) => a + g.sec, 0),
@@ -805,7 +810,8 @@ function optionCard(o, i, dest) {
   const next = f
     ? `<div class="next-bus">${f.icon} <b>${esc(f.line || f.lineName)}</b> ${esc(f.vehicle)}${f.headsign ? `（往 ${esc(f.headsign)}）` : ''}<br>
         在「${esc(f.from)}」上車${f.dep ? `，<b>${hhmm(f.dep)}</b> 發車 <span class="count${cd.soon ? ' soon' : ''}" data-dep="${f.dep.getTime()}">${cd.text}</span>` : ''}
-        ${o.leaveBy ? `<br>👉 最晚 <b>${hhmm(o.leaveBy)}</b> 要出發走去車站` : ''}</div>`
+        ${o.leaveBy ? `<br>👉 最晚 <b>${hhmm(o.leaveBy)}</b> 要出發走去車站` : ''}
+        ${o.later?.length ? `<br>⏭ 下一班：${o.later.slice(0, 4).map(hhmm).join('、')}` : ''}</div>`
     : '<div class="next-bus">這段路走路就到了，不用搭車。</div>';
   const steps = o.segs.map((g) => (g.type === 'walk'
     ? `<li>🚶 走路 ${fmtDur(g.sec)}（${fmtDist(g.m)}）</li>`
@@ -814,8 +820,8 @@ function optionCard(o, i, dest) {
   const q = new URLSearchParams({ api: '1', origin: `${S.origin.lat},${S.origin.lng}`, destination: dest.name, travelmode: 'transit' });
   return `<article class="card"><div class="opt-head" data-opt="${i}">
       <div class="opt-top"><span class="dur">${fmtDur(o.sec)}${i === 0 ? '<span class="best">推薦</span>' : ''}</span>
-        <span class="fare">${o.fare ? `💰 ${esc(o.fare)}` : '<span class="small">車資未提供</span>'}</span></div>
-      <div class="small">現在出發 → 約 ${hhmm(o.arrive)} 抵達 · ${o.transfers ? `轉乘 ${o.transfers} 次` : '不用轉乘'} · 走路共 ${fmtDur(o.walkSec)}</div>
+        <span class="fare">${o.fare ? `💰 ${esc(o.fare)}` : '<span class="small">車資：Google 沒有資料</span>'}</span></div>
+      <div class="small">${o.leaveBy ? `${hhmm(o.leaveBy)} 出門` : '現在出發'} → 約 <b>${hhmm(o.arrive)}</b> 抵達 · ${o.transfers ? `轉乘 ${o.transfers} 次` : '不用轉乘'} · 走路共 ${fmtDur(o.walkSec)}</div>
       <div class="legs">${legs}</div>
       ${next}
       <div class="small" style="margin-top:6px">點這裡看完整搭乘步驟 ▾</div>
@@ -834,13 +840,23 @@ async function planTrip(dest) {
   saveRecent({ name: dest.name, loc: dest.loc });
   box.innerHTML = '<div class="empty">正在查詢班次…</div>';
   try {
-    const opts = await transitOptions(dest);
+    const raw = await transitOptions(dest);
+    const groups = new Map();
+    for (const o of raw) {
+      if (o.leaveBy && o.leaveBy.getTime() < Date.now() - 60000) continue; // 已經來不及的班次
+      if (!groups.has(o.key)) groups.set(o.key, []);
+      groups.get(o.key).push(o);
+    }
+    const opts = [...groups.values()].map((list) => {
+      list.sort((a, b) => (a.first?.dep || 0) - (b.first?.dep || 0));
+      return { ...list[0], later: list.slice(1).map((o) => o.first?.dep).filter(Boolean) };
+    }).sort((a, b) => a.arrive - b.arrive);
     S.goDest = dest; S.goOpts = opts;
     if (!opts.length) {
       box.innerHTML = '<div class="empty">找不到大眾運輸路線（可能太近、太晚沒車，或這個地區沒有 Google 的大眾運輸資料）。<br>可以用「🔎 搜尋地點」找到那裡，再按「帶我去」看走路或開車。</div>';
       return;
     }
-    box.innerHTML = `<div class="small" style="padding:8px 4px">前往「${esc(dest.name)}」，找到 ${opts.length} 種搭法。班次時間來自 Google 時刻表，實際以站牌／車站公告為準。</div>`
+    box.innerHTML = `<div class="small" style="padding:8px 4px">前往「${esc(dest.name)}」，找到 ${opts.length} 種搭法（依抵達時間排序）。班次時間來自 Google 時刻表，實際以站牌／車站公告為準。</div>`
       + opts.map((o, i) => optionCard(o, i, dest)).join('');
     showOptionOnMap(0);
   } catch (e) {
