@@ -243,7 +243,7 @@ const SIGHT_TYPES = ['historical_landmark', 'tourist_attraction', 'museum', 'mon
 const SIGHT_TYPES_SAFE = ['historical_landmark', 'tourist_attraction', 'museum'];
 const FOOD_TYPES = ['restaurant', 'cafe', 'bakery'];
 const BASE_FIELDS = ['id', 'displayName', 'location', 'rating', 'userRatingCount', 'photos', 'editorialSummary',
-  'primaryTypeDisplayName', 'formattedAddress', 'googleMapsURI', 'regularOpeningHours', 'reviews'];
+  'primaryTypeDisplayName', 'types', 'formattedAddress', 'googleMapsURI', 'regularOpeningHours', 'reviews'];
 
 async function searchPlaces(kind, radius) {
   if (!S.map) return [];
@@ -267,7 +267,8 @@ async function searchPlaces(kind, radius) {
     console.warn('searchNearby fallback', e);
     res = await run(kind === 'food' ? ['restaurant'] : SIGHT_TYPES_SAFE, kind === 'food' ? [...BASE_FIELDS, 'priceLevel'] : BASE_FIELDS);
   }
-  return (res.places || []).map((p) => {
+  const LODGING = /(lodging|hotel|resort_hotel|motel|hostel|guest_house|bed_and_breakfast)/;
+  return (res.places || []).filter((p) => kind !== 'food' || !(p.types || []).some((t) => LODGING.test(t))).map((p) => {
     const loc = { lat: p.location.lat(), lng: p.location.lng() };
     return {
       uid: `${kind}:${p.id}`, kind, source: 'google', placeId: p.id,
@@ -301,6 +302,7 @@ function priceText(p) {
   const cur = r?.startPrice?.currencyCode || r?.endPrice?.currencyCode;
   const sym = cur === 'TWD' ? 'NT$' : cur === 'JPY' ? '¥' : cur === 'USD' ? 'US$' : cur ? `${cur} ` : '';
   const a = moneyNum(r?.startPrice), b = moneyNum(r?.endPrice);
+  if (a && b && a <= 1) return `每人約 ${sym}${b} 以下`;
   if (a && b) return `每人約 ${sym}${a}–${b}`;
   if (a) return `每人約 ${sym}${a} 以上`;
   const lv = String(p.priceLevel ?? '').toUpperCase();
