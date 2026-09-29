@@ -747,6 +747,7 @@ async function transitOptions(dest) {
         const td = s.transitDetails, line = td.transitLine || {};
         segs.push({
           type: 'transit',
+          vtype: line.vehicle?.type || '',
           icon: VEHICLE_ICON[line.vehicle?.type] || '🚌',
           vehicle: line.vehicle?.name?.text || '',
           line: line.nameShort || line.name || '',
@@ -782,7 +783,7 @@ async function transitOptions(dest) {
       arrive,
       leaveBy,
       key: transits.map((g) => `${g.line}@${g.from}>${g.to}`).join('|') || 'walk',
-      fare: rt.localizedValues?.transitFare?.text || (fareNum ? `${sym}${fareNum}` : null),
+      fare: fareNum ? `${sym}${Math.round(fareNum * 100) / 100}` : (rt.localizedValues?.transitFare?.text || null),
       transfers: Math.max(0, transits.length - 1),
       walkSec: segs.filter((g) => g.type === 'walk').reduce((a, g) => a + g.sec, 0),
       segs, first,
@@ -841,8 +842,13 @@ async function planTrip(dest) {
   box.innerHTML = '<div class="empty">正在查詢班次…</div>';
   try {
     const raw = await transitOptions(dest);
+    const mode = $('#goModes').value;
+    const isBus = (t) => /BUS/.test(t);
     const groups = new Map();
     for (const o of raw) {
+      const types = o.segs.filter((g) => g.type === 'transit').map((g) => g.vtype);
+      if (mode === 'BUS' && types.some((t) => !isBus(t))) continue;
+      if (mode === 'RAIL' && types.some(isBus)) continue;
       if (o.leaveBy && o.leaveBy.getTime() < Date.now() - 60000) continue; // 已經來不及的班次
       if (!groups.has(o.key)) groups.set(o.key, []);
       groups.get(o.key).push(o);
@@ -852,6 +858,10 @@ async function planTrip(dest) {
       return { ...list[0], later: list.slice(1).map((o) => o.first?.dep).filter(Boolean) };
     }).sort((a, b) => a.arrive - b.arrive);
     S.goDest = dest; S.goOpts = opts;
+    if (!opts.length && mode) {
+      box.innerHTML = '<div class="empty">找不到符合「' + esc($('#goModes').selectedOptions[0].text) + '」的路線，改成「公車、捷運、火車都可以」試試看。</div>';
+      return;
+    }
     if (!opts.length) {
       box.innerHTML = '<div class="empty">找不到大眾運輸路線（可能太近、太晚沒車，或這個地區沒有 Google 的大眾運輸資料）。<br>可以用「🔎 搜尋地點」找到那裡，再按「帶我去」看走路或開車。</div>';
       return;
