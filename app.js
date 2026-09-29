@@ -195,7 +195,8 @@ async function search(label, arrived = false) {
   renderSights();
   renderFood();
   drawMarkers();
-  const place = ctx.name;
+  // 用搜尋框查的地點，就顯示你輸入的名稱
+  const place = label.startsWith('「') ? `${label.slice(1, -1)}附近` : ctx.name;
   setStatus(`📍 ${place || label}：找到 ${S.sights.length} 個景點、${S.food.length} 家美食${S.manual ? '（手動選點，按 📍 回到 GPS）' : ''}`);
   if (arrived && S.notify) notify(`你到了${place || '新地點'}`, `附近有 ${S.sights.length} 個景點、${S.food.length} 家美食`);
   enrichTravel(searchId);
