@@ -20,6 +20,12 @@
     </div>
   </header>
 
+  <form id="placeSearch" class="place-search" autocomplete="off">
+    <input id="placeQuery" type="search" placeholder="🔎 搜尋地點，例如：京都 清水寺、淺草、赤崁樓" enterkeyhint="search">
+    <button type="submit" class="chip primary">查詢</button>
+    <div id="placeResults" class="place-results hidden"></div>
+  </form>
+
   <div id="status" class="status">正在取得你的位置…</div>
 
   <main class="layout">

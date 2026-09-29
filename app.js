@@ -700,10 +700,63 @@ document.addEventListener('click', (e) => {
   else if (t.classList.contains('tab') && !t.disabled) switchTab(t.dataset.tab);
 });
 
-$('#btnRefresh').onclick = () => search(S.manual ? '你選的位置' : '你目前的位置');
+// ---------- 搜尋地點：用輸入的地名當作查詢位置 ----------
+async function findPlaces(q) {
+  if (S.map) {
+    const { Place } = await google.maps.importLibrary('places');
+    const { places } = await Place.searchByText({
+      textQuery: q, fields: ['displayName', 'location', 'formattedAddress'], maxResultCount: 5, language: 'zh-TW',
+    });
+    return (places || []).map((p) => ({ name: p.displayName, addr: p.formattedAddress, loc: { lat: p.location.lat(), lng: p.location.lng() } }));
+  }
+  // 沒有金鑰時，改用維基百科條目的座標
+  const d = await wikiApi({ action: 'query', generator: 'search', gsrsearch: q, gsrlimit: '8', prop: 'coordinates|description', colimit: 'max' });
+  return Object.values(d.query?.pages || {}).filter((p) => p.coordinates)
+    .sort((a, b) => a.index - b.index).slice(0, 5)
+    .map((p) => ({ name: p.title, addr: p.description || '', loc: { lat: p.coordinates[0].lat, lng: p.coordinates[0].lon } }));
+}
+
+function goToPlace(p) {
+  $('#placeResults').classList.add('hidden');
+  $('#placeQuery').value = p.name;
+  $('#placeQuery').blur();
+  setOrigin(p.loc, true);
+  if (S.map) S.map.setZoom(15);
+  switchTab('sights');
+  search(`「${p.name}」`);
+}
+
+$('#placeSearch').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = $('#placeQuery').value.trim();
+  const box = $('#placeResults');
+  if (!q) return;
+  box.classList.remove('hidden');
+  box.innerHTML = '<div class="small" style="padding:10px 14px">搜尋中…</div>';
+  try {
+    const list = await findPlaces(q);
+    if (!list.length) { box.innerHTML = '<div class="small" style="padding:10px 14px">找不到這個地點，換個說法試試看。</div>'; return; }
+    if (list.length === 1) { goToPlace(list[0]); return; }
+    S.placeHits = list;
+    box.innerHTML = list.map((p, i) => `<button type="button" data-hit="${i}">${esc(p.name)}<span class="addr">${esc(p.addr)}</span></button>`).join('');
+  } catch (err) {
+    console.warn(err);
+    box.innerHTML = '<div class="small" style="padding:10px 14px">搜尋失敗，請稍後再試。</div>';
+  }
+});
+$('#placeResults').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-hit]');
+  if (b) goToPlace(S.placeHits[+b.dataset.hit]);
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#placeSearch')) $('#placeResults').classList.add('hidden');
+});
+
+$('#btnRefresh').onclick =() => search(S.manual ? '你選的位置' : '你目前的位置');
 $('#radius').onchange = () => search(S.manual ? '你選的位置' : '你目前的位置');
 $('#btnLocate').onclick = () => {
   if (!S.gps) { setStatus('還沒取得 GPS 定位…'); return; }
+  $('#placeQuery').value = '';
   setOrigin(S.gps, false);
   search('你目前的位置');
 };
