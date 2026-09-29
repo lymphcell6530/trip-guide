@@ -727,7 +727,7 @@ function goToPlace(p) {
   search(`「${p.name}」`);
 }
 
-$('#placeSearch').addEventListener('submit', async (e) => {
+$('#placeSearch')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const q = $('#placeQuery').value.trim();
   const box = $('#placeResults');
@@ -745,12 +745,12 @@ $('#placeSearch').addEventListener('submit', async (e) => {
     box.innerHTML = '<div class="small" style="padding:10px 14px">搜尋失敗，請稍後再試。</div>';
   }
 });
-$('#placeResults').addEventListener('click', (e) => {
+$('#placeResults')?.addEventListener('click', (e) => {
   const b = e.target.closest('[data-hit]');
   if (b) goToPlace(S.placeHits[+b.dataset.hit]);
 });
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('#placeSearch')) $('#placeResults').classList.add('hidden');
+  if (!e.target.closest('#placeSearch')) $('#placeResults')?.classList.add('hidden');
 });
 
 $('#btnRefresh').onclick =() => search(S.manual ? '你選的位置' : '你目前的位置');
@@ -783,7 +783,7 @@ $('#settings').addEventListener('close', async () => {
 });
 
 // 產生 QR code：手機掃了就會打開這個 App 並自動存好金鑰（金鑰放在 # 後面，不會傳到伺服器）
-$('#btnPhone').onclick = async () => {
+if ($('#btnPhone')) $('#btnPhone').onclick = async () => {
   const key = $('#apiKey').value.trim();
   const box = $('#qrBox');
   box.classList.remove('hidden');
@@ -809,6 +809,15 @@ $('#btnPhone').onclick = async () => {
 };
 
 // ---------- 啟動 ----------
+// 畫面（index.html）和程式（app.js）版本不一致時：清掉快取重新載入一次
+if (!$('#placeSearch') && !sessionStorage.getItem('healed')) {
+  sessionStorage.setItem('healed', '1');
+  Promise.all([
+    navigator.serviceWorker?.getRegistrations().then((rs) => Promise.all(rs.map((r) => r.unregister()))),
+    window.caches?.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))),
+  ]).finally(() => location.reload());
+}
+
 (async function boot() {
   const hash = new URLSearchParams(location.hash.slice(1));
   if (hash.get('key')) {

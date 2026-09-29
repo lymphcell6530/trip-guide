@@ -1,5 +1,5 @@
 // 只快取 App 外殼，地圖與搜尋資料一律走網路
-const CACHE = 'trip-guide-v8';
+const CACHE = 'trip-guide-v9';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -12,7 +12,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin || e.request.method !== 'GET') return;
   // 網路優先，離線時才用快取
-  e.respondWith(fetch(e.request, { cache: 'no-cache' }).then((r) => {
+  e.respondWith(fetch(e.request, { cache: e.request.mode === 'navigate' ? 'no-store' : 'no-cache' }).then((r) => {
     const copy = r.clone();
     caches.open(CACHE).then((c) => c.put(e.request, copy));
     return r;
