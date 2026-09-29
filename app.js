@@ -742,6 +742,7 @@ $('#btnPhone').onclick = async () => {
   qr.addData(url);
   qr.make();
   box.innerHTML = `${qr.createImgTag(4, 0)}<div>用手機相機掃描 → 打開網頁 → 瀏覽器選單「加入主畫面」</div>`;
+  box.scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
 
 // ---------- 啟動 ----------
