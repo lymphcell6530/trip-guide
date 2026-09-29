@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=11">
+  <link rel="stylesheet" href="style.css?v=14">
 </head>
 <body>
   <header class="topbar">
@@ -92,6 +92,11 @@
       <p class="small">需在 Google Cloud 啟用：<b>Maps JavaScript API</b>、<b>Places API (New)</b>、<b>Routes API</b>、<b>Geocoding API</b>（建議再加 <b>Cloud Translation API</b>，日本景點的日文故事會自動翻成中文）。金鑰只存在這台裝置的瀏覽器裡。</p>
       <button type="button" id="btnPhone" class="chip">📱 用手機掃描，把設定帶到手機</button>
       <div id="qrBox" class="qr hidden"></div>
+      <label>TDX 金鑰（台灣公車即時到站、台鐵／高鐵時刻與票價）
+        <input id="tdxId" type="text" placeholder="Client Id" autocomplete="off" spellcheck="false">
+        <input id="tdxSecret" type="text" placeholder="Client Secret" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="small">到 <a href="https://tdx.transportdata.tw/register" target="_blank" rel="noopener">TDX 運輸資料流通服務</a> 免費註冊，登入後在「會員中心 → 資料服務 → API 金鑰」可以看到 Client Id 和 Client Secret。</p>
       <label>自動搜尋：移動多遠後、停留多久才算「到新定點」
         <div class="row">
           <select id="moveThreshold">
@@ -114,6 +119,6 @@
     </form>
   </dialog>
 
-  <script src="app.js?v=13"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>

@@ -7,6 +7,8 @@ const S = {
   moveThreshold: +load('moveThreshold', 500),
   dwellSeconds: +load('dwellSeconds', 90),
   notify: load('notify', '0') === '1',
+  tdxId: load('tdxId', ''),
+  tdxSecret: load('tdxSecret', ''),
   auto: load('auto', '1') === '1',
   gps: null,            // 最新 GPS 位置 {lat,lng}
   origin: null,         // 目前用來搜尋與導航的位置
@@ -755,6 +757,8 @@ async function transitOptions(dest) {
           color: line.color || '#0f766e', textColor: line.textColor || '#ffffff',
           agency: line.agencies?.[0]?.name || '',
           from: td.stopDetails?.departureStop?.name, to: td.stopDetails?.arrivalStop?.name,
+          fromLoc: td.stopDetails?.departureStop?.location?.latLng ? { lat: td.stopDetails.departureStop.location.latLng.latitude, lng: td.stopDetails.departureStop.location.latLng.longitude } : null,
+          toLoc: td.stopDetails?.arrivalStop?.location?.latLng ? { lat: td.stopDetails.arrivalStop.location.latLng.latitude, lng: td.stopDetails.arrivalStop.location.latLng.longitude } : null,
           dep: td.stopDetails?.departureTime ? new Date(td.stopDetails.departureTime) : null,
           arr: td.stopDetails?.arrivalTime ? new Date(td.stopDetails.arrivalTime) : null,
           headsign: td.headsign, stops: td.stopCount,
@@ -812,12 +816,13 @@ function optionCard(o, i, dest) {
     ? `<div class="next-bus">${f.icon} <b>${esc(f.line || f.lineName)}</b> ${esc(f.vehicle)}${f.headsign ? `（往 ${esc(f.headsign)}）` : ''}<br>
         在「${esc(f.from)}」上車${f.dep ? `，<b>${hhmm(f.dep)}</b> 發車 <span class="count${cd.soon ? ' soon' : ''}" data-dep="${f.dep.getTime()}">${cd.text}</span>` : ''}
         ${o.leaveBy ? `<br>👉 最晚 <b>${hhmm(o.leaveBy)}</b> 要出發走去車站` : ''}
-        ${o.later?.length ? `<br>⏭ 下一班：${o.later.slice(0, 4).map(hhmm).join('、')}` : ''}</div>`
+        ${o.later?.length ? `<br>⏭ 下一班：${o.later.slice(0, 4).map(hhmm).join('、')}` : ''}
+        ${S.country === 'TW' ? `<div class="tdx" data-tdx="${i}-${o.segs.indexOf(f)}"></div>` : ''}</div>`
     : '<div class="next-bus">這段路走路就到了，不用搭車。</div>';
-  const steps = o.segs.map((g) => (g.type === 'walk'
+  const steps = o.segs.map((g, j) => (g.type === 'walk'
     ? `<li>🚶 走路 ${fmtDur(g.sec)}（${fmtDist(g.m)}）</li>`
     : `<li>${lineChip(g)} ${esc(g.from)} → ${esc(g.to)}${g.headsign ? `（往 ${esc(g.headsign)}）` : ''}
-        <div class="sd">${g.dep ? `${hhmm(g.dep)} 發車 · ` : ''}${g.arr ? `${hhmm(g.arr)} 到站 · ` : ''}${g.stops ? `坐 ${g.stops} 站 · ` : ''}${fmtDur(g.sec)}${g.agency ? ` · ${esc(g.agency)}` : ''}</div></li>`)).join('');
+        <div class="sd">${g.dep ? `${hhmm(g.dep)} 發車 · ` : ''}${g.arr ? `${hhmm(g.arr)} 到站 · ` : ''}${g.stops ? `坐 ${g.stops} 站 · ` : ''}${fmtDur(g.sec)}${g.agency ? ` · ${esc(g.agency)}` : ''}</div>${S.country === 'TW' ? `<div class="tdx sd" data-tdx="${i}-${j}"></div>` : ''}</li>`)).join('');
   const q = new URLSearchParams({ api: '1', origin: `${S.origin.lat},${S.origin.lng}`, destination: dest.name, travelmode: 'transit' });
   return `<article class="card"><div class="opt-head" data-opt="${i}">
       <div class="opt-top"><span class="dur">${fmtDur(o.sec)}${i === 0 ? '<span class="best">推薦</span>' : ''}</span>
@@ -876,6 +881,7 @@ async function planTrip(dest) {
     box.innerHTML = `<div class="small" style="padding:8px 4px">前往「${esc(dest.name)}」，找到 ${opts.length} 種搭法（依抵達時間排序）。班次時間來自 Google 時刻表，實際以站牌／車站公告為準。</div>`
       + opts.map((o, i) => optionCard(o, i, dest)).join('');
     showOptionOnMap(0);
+    if (S.country === 'TW') tdxEnrich(opts);
   } catch (e) {
     console.warn(e);
     box.innerHTML = `<div class="empty">查詢失敗：${esc(e.message)}</div>`;
@@ -936,6 +942,229 @@ $('#go-view')?.addEventListener('click', (e) => {
 });
 $('#goPref')?.addEventListener('change', () => S.goDest && planTrip(S.goDest));
 $('#goModes')?.addEventListener('change', () => S.goDest && planTrip(S.goDest));
+
+// ---------- TDX（交通部運輸資料流通服務）：公車即時到站、台鐵／高鐵時刻與票價 ----------
+const TDX = 'https://tdx.transportdata.tw/api/basic';
+const TDX_CITY = {
+  臺北市: 'Taipei', 新北市: 'NewTaipei', 桃園市: 'Taoyuan', 臺中市: 'Taichung', 臺南市: 'Tainan', 高雄市: 'Kaohsiung',
+  基隆市: 'Keelung', 新竹市: 'Hsinchu', 新竹縣: 'HsinchuCounty', 苗栗縣: 'MiaoliCounty', 彰化縣: 'ChanghuaCounty',
+  南投縣: 'NantouCounty', 雲林縣: 'YunlinCounty', 嘉義縣: 'ChiayiCounty', 嘉義市: 'Chiayi', 屏東縣: 'PingtungCounty',
+  宜蘭縣: 'YilanCounty', 花蓮縣: 'HualienCounty', 臺東縣: 'TaitungCounty', 金門縣: 'KinmenCounty', 澎湖縣: 'PenghuCounty', 連江縣: 'LienchiangCounty',
+};
+const tdxReady = () => !!(S.tdxId && S.tdxSecret);
+
+async function tdxToken() {
+  const now = Date.now();
+  if (S.tdxTok && S.tdxTokExp > now + 60000) return S.tdxTok;
+  const r = await fetch('https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'client_credentials', client_id: S.tdxId, client_secret: S.tdxSecret }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !d.access_token) throw new Error(d.error_description || 'TDX 金鑰錯誤');
+  S.tdxTok = d.access_token;
+  S.tdxTokExp = now + (d.expires_in || 3600) * 1000;
+  return S.tdxTok;
+}
+
+const tdxCache = new Map();
+async function tdxGet(path, params = {}, ttl = 0) {
+  const q = new URLSearchParams({ $format: 'JSON', ...params });
+  const url = `${TDX}${path}?${q}`;
+  const hit = tdxCache.get(url);
+  if (ttl && hit && hit.exp > Date.now()) return hit.data;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${await tdxToken()}` } });
+  if (!r.ok) throw new Error(`TDX ${r.status}`);
+  const data = await r.json();
+  if (ttl) tdxCache.set(url, { data, exp: Date.now() + ttl });
+  return data;
+}
+const odataStr = (s) => String(s).replace(/'/g, "''");
+const normStop = (s) => String(s || '').replace(/[\s（）()]/g, '').replace(/台/g, '臺').replace(/(火車站|車站|站)$/, '');
+
+const cityCache = new Map();
+async function cityCodeAt(loc) {
+  const k = `${loc.lat.toFixed(3)},${loc.lng.toFixed(3)}`;
+  if (cityCache.has(k)) return cityCache.get(k);
+  let code = null;
+  try {
+    const { Geocoder } = await google.maps.importLibrary('geocoding');
+    const { results } = await new Geocoder().geocode({ location: loc, language: 'zh-TW' });
+    const name = results.flatMap((r) => r.address_components).find((c) => c.types.includes('administrative_area_level_1'))?.long_name;
+    code = TDX_CITY[String(name || '').replace(/台/g, '臺')] || null;
+  } catch (e) { console.warn('city', e); }
+  cityCache.set(k, code);
+  return code;
+}
+
+// Google 的路線名稱可能是「紅3林園幹線」，TDX 是「紅3」：準備幾個候選名稱
+function routeCandidates(g) {
+  const c = [g.line, g.lineName, String(g.line || '').replace(/[一-鿿]{2,}(幹線|線|路)?$/, '')].map((x) => String(x || '').trim()).filter(Boolean);
+  return [...new Set(c)];
+}
+
+// 找出這班公車在 TDX 的路線、方向和上車站（用站牌座標比對最準）
+async function findBusStop(g) {
+  const city = await cityCodeAt(g.fromLoc);
+  const scopes = [];
+  if (city) scopes.push(`City/${city}`);
+  if (city === 'Taipei') scopes.push('City/NewTaipei');
+  if (city === 'NewTaipei') scopes.push('City/Taipei');
+  scopes.push('InterCity');
+  for (const scope of scopes) {
+    for (const name of routeCandidates(g)) {
+      let routes;
+      try { routes = await tdxGet(`/v2/Bus/StopOfRoute/${scope}`, { $filter: `RouteName/Zh_tw eq '${odataStr(name)}'` }, 3600e3); } catch (e) { if (/401|403/.test(e.message)) throw e; continue; }
+      let best = null;
+      for (const rt of routes || []) {
+        const stops = rt.Stops || [];
+        const near = (loc) => {
+          let bi = -1, bd = Infinity;
+          stops.forEach((s, i) => {
+            const d = distM(loc, { lat: s.StopPosition?.PositionLat, lng: s.StopPosition?.PositionLon });
+            if (d < bd) { bd = d; bi = i; }
+          });
+          return { i: bi, d: bd };
+        };
+        const a = near(g.fromLoc), b = g.toLoc ? near(g.toLoc) : { i: stops.length, d: 0 };
+        if (a.i < 0 || a.d > 300 || b.d > 300 || a.i >= b.i) continue;
+        const score = a.d + b.d;
+        if (!best || score < best.score) best = { score, scope, route: rt, stop: stops[a.i] };
+      }
+      if (best) return best;
+    }
+  }
+  return null;
+}
+
+async function busRealtime(g) {
+  const m = await findBusStop(g);
+  if (!m) return null;
+  const f = `RouteUID eq '${m.route.RouteUID}' and StopUID eq '${m.stop.StopUID}' and Direction eq ${m.route.Direction}`;
+  const eta = await tdxGet(`/v2/Bus/EstimatedTimeOfArrival/${m.scope}`, { $filter: f });
+  const e = (eta || []).sort((x, y) => (x.EstimateTime ?? 1e9) - (y.EstimateTime ?? 1e9))[0];
+  return { stopName: m.stop.StopName?.Zh_tw, eta: e };
+}
+
+function busEtaHtml(res) {
+  if (!res) return '<span class="small">官方資料找不到這班公車（可能是跨縣市或名稱不同）</span>';
+  const e = res.eta;
+  const st = e?.StopStatus;
+  let msg;
+  if (e && e.EstimateTime != null && st === 0) {
+    const min = Math.floor(e.EstimateTime / 60);
+    msg = min <= 1 ? '<b class="live soon">即將進站</b>' : `<b class="live${min <= 5 ? ' soon' : ''}">還有 ${min} 分鐘進站</b>`;
+  } else if (st === 1) {
+    msg = `尚未發車${e.NextBusTime ? `，預計 ${hhmm(new Date(e.NextBusTime))} 發車` : ''}`;
+  } else if (st === 2) msg = '交管不停靠';
+  else if (st === 3) msg = '<b class="live soon">末班車已過</b>';
+  else if (st === 4) msg = '今日未營運';
+  else msg = '目前沒有到站資訊';
+  return `🛰️ 官方即時（${esc(res.stopName || '')}）：${msg}`;
+}
+
+// 台鐵／高鐵：用站名找站代碼
+async function railStations(kind) {
+  if (kind === 'THSR') return (await tdxGet('/v2/Rail/THSR/Station', {}, 864e5)).map((s) => ({ id: s.StationID, name: s.StationName?.Zh_tw }));
+  const d = await tdxGet('/v3/Rail/TRA/Station', {}, 864e5);
+  return (d.Stations || d).map((s) => ({ id: s.StationID, name: s.StationName?.Zh_tw }));
+}
+async function railStationId(kind, name) {
+  const n = normStop(String(name).replace(/^(高鐵|臺鐵|台鐵)/, ''));
+  const list = await railStations(kind);
+  return (list.find((s) => normStop(s.name) === n) || list.find((s) => n.includes(normStop(s.name)) || normStop(s.name).includes(n)))?.id || null;
+}
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const hm2date = (t, base) => { const [h, m] = String(t).split(':').map(Number); const d = new Date(base); d.setHours(h, m, 0, 0); return d; };
+
+function collectPrices(x, out = []) {
+  if (Array.isArray(x)) x.forEach((v) => collectPrices(v, out));
+  else if (x && typeof x === 'object') {
+    if (typeof x.Price === 'number' && x.Price > 0) out.push(x.Price);
+    Object.values(x).forEach((v) => collectPrices(v, out));
+  }
+  return out;
+}
+
+async function railInfo(kind, g) {
+  const [o, d] = await Promise.all([railStationId(kind, g.from), railStationId(kind, g.to)]);
+  if (!o || !d) return null;
+  const when = g.dep || new Date();
+  const date = ymd(when);
+  let trains = [];
+  if (kind === 'THSR') {
+    const tt = await tdxGet(`/v2/Rail/THSR/DailyTimetable/OD/${o}/to/${d}/${date}`, {}, 600e3);
+    trains = (tt || []).map((t) => ({ no: t.DailyTrainInfo?.TrainNo, type: '高鐵', dep: hm2date(t.OriginStopTime?.DepartureTime, when), arr: hm2date(t.DestinationStopTime?.ArrivalTime, when) }));
+  } else {
+    const tt = await tdxGet(`/v3/Rail/TRA/DailyTrainTimetable/OD/${o}/to/${d}/${date}`, {}, 600e3);
+    trains = (tt.TrainTimetables || []).map((t) => {
+      const st = t.StopTimes || [];
+      const a = st.find((s) => s.StationID === o), b = st.find((s) => s.StationID === d);
+      return { no: t.TrainInfo?.TrainNo, type: t.TrainInfo?.TrainTypeName?.Zh_tw || '', dep: hm2date(a?.DepartureTime, when), arr: hm2date(b?.ArrivalTime, when) };
+    });
+  }
+  const now = Date.now();
+  trains = trains.filter((t) => t.dep.getTime() >= now - 60000).sort((a, b) => a.dep - b.dep).slice(0, 4);
+  let fare = null;
+  try {
+    const f = await tdxGet(kind === 'THSR' ? `/v2/Rail/THSR/ODFare/${o}/to/${d}` : `/v3/Rail/TRA/ODFare/${o}/to/${d}`, {}, 864e5);
+    const p = collectPrices(f);
+    if (p.length) fare = { min: Math.min(...p), max: Math.max(...p) };
+  } catch (e) { console.warn('fare', e); }
+  // 台鐵誤點（只查第一班）
+  if (kind === 'TRA' && trains[0]) {
+    try {
+      const lb = await tdxGet(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trains[0].no}`);
+      const delay = (lb.TrainLiveBoards || [])[0]?.DelayTime;
+      if (delay != null) trains[0].delay = delay;
+    } catch {}
+  }
+  return { trains, fare };
+}
+
+function railHtml(kind, info) {
+  if (!info) return '<span class="small">官方資料找不到這兩個車站</span>';
+  const fare = info.fare ? `💰 官方票價 NT$${info.fare.min}${info.fare.max !== info.fare.min ? `–${info.fare.max}（依車種／車廂）` : ''}` : '';
+  const list = info.trains.map((t, k) => `${hhmm(t.dep)} ${esc(t.type)}${t.no ? ` ${esc(t.no)}次` : ''}${k === 0 && t.delay != null ? (t.delay > 0 ? ` <b class="live soon">誤點 ${t.delay} 分</b>` : ' <b class="live">準點</b>') : ''}`).join('、');
+  return `🛰️ 官方${kind === 'THSR' ? '高鐵' : '台鐵'}時刻：${list || '今天已無班次'}${fare ? `<br>${fare}` : ''}`;
+}
+
+function segKind(g) {
+  const a = `${g.agency} ${g.lineName} ${g.vehicle}`;
+  if (/高鐵|High Speed/i.test(a) || g.vtype === 'HIGH_SPEED_TRAIN') return 'THSR';
+  if (/臺鐵|台鐵|Taiwan Railway/i.test(a)) return 'TRA';
+  if (/BUS/.test(g.vtype)) return 'BUS';
+  return null;
+}
+
+// 把官方資料填進每種搭法（只處理台灣、有 TDX 金鑰時）
+async function tdxEnrich(opts) {
+  const cells = document.querySelectorAll('[data-tdx]');
+  if (!cells.length) return;
+  if (!tdxReady()) {
+    cells.forEach((c) => { c.innerHTML = '<span class="small">想看官方即時到站？到 ⚙️ 設定填入 TDX 金鑰</span>'; });
+    return;
+  }
+  const jobs = new Map();
+  opts.forEach((o, i) => o.segs.forEach((g, j) => {
+    if (g.type !== 'transit') return;
+    const kind = segKind(g);
+    if (!kind) return;
+    jobs.set(`${i}-${j}`, { kind, g });
+  }));
+  document.querySelectorAll('[data-tdx]').forEach((c) => { if (!jobs.has(c.dataset.tdx)) c.remove(); else c.innerHTML = '<span class="small">🛰️ 查詢官方資料…</span>'; });
+  const fill = (key, html) => document.querySelectorAll(`[data-tdx="${key}"]`).forEach((c) => { c.innerHTML = html; });
+  await Promise.all([...jobs].map(async ([key, { kind, g }]) => {
+    try {
+      if (kind === 'BUS') fill(key, busEtaHtml(await busRealtime(g)));
+      else fill(key, railHtml(kind, await railInfo(kind, g)));
+    } catch (e) {
+      console.warn('TDX', e);
+      fill(key, `<span class="small">官方資料暫時查不到（${esc(e.message)}）</span>`);
+    }
+  }));
+}
 
 // ---------- 通知 ----------
 function notify(title, body) {
@@ -1023,6 +1252,7 @@ $('#btnSettings').onclick = () => {
   $('#moveThreshold').value = String(S.moveThreshold);
   $('#dwellSeconds').value = String(S.dwellSeconds);
   $('#notify').checked = S.notify;
+  if ($('#tdxId')) { $('#tdxId').value = S.tdxId; $('#tdxSecret').value = S.tdxSecret; }
   $('#settings').showModal();
 };
 $('#settings').addEventListener('close', async () => {
@@ -1031,6 +1261,10 @@ $('#settings').addEventListener('close', async () => {
   S.moveThreshold = +$('#moveThreshold').value; save('moveThreshold', S.moveThreshold);
   S.dwellSeconds = +$('#dwellSeconds').value; save('dwellSeconds', S.dwellSeconds);
   S.notify = $('#notify').checked; save('notify', S.notify ? '1' : '0');
+  if ($('#tdxId')) {
+    const id = $('#tdxId').value.trim(), sec = $('#tdxSecret').value.trim();
+    if (id !== S.tdxId || sec !== S.tdxSecret) { S.tdxId = id; S.tdxSecret = sec; S.tdxTok = null; save('tdxId', id); save('tdxSecret', sec); }
+  }
   if (S.notify && 'Notification' in window) Notification.requestPermission();
   if (newKey !== S.key) { save('gmKey', newKey); location.reload(); }
 });
@@ -1052,7 +1286,10 @@ if ($('#btnPhone')) $('#btnPhone').onclick = async () => {
       document.head.appendChild(s);
     }).catch(() => {});
   }
-  const url = `${location.origin}${location.pathname}${key ? `#key=${encodeURIComponent(key)}` : ''}`;
+  const h = new URLSearchParams();
+  if (key) h.set('key', key);
+  if ($('#tdxId')?.value.trim()) { h.set('tid', $('#tdxId').value.trim()); h.set('tsec', $('#tdxSecret').value.trim()); }
+  const url = `${location.origin}${location.pathname}${h.toString() ? `#${h}` : ''}`;
   if (!window.qrcode) { box.textContent = url; return; }
   const qr = qrcode(0, 'M');
   qr.addData(url);
@@ -1073,9 +1310,9 @@ if (!$('#placeSearch') && !sessionStorage.getItem('healed')) {
 
 (async function boot() {
   const hash = new URLSearchParams(location.hash.slice(1));
-  if (hash.get('key')) {
-    S.key = hash.get('key');
-    save('gmKey', S.key);
+  if (hash.get('tid')) { S.tdxId = hash.get('tid'); S.tdxSecret = hash.get('tsec') || ''; save('tdxId', S.tdxId); save('tdxSecret', S.tdxSecret); }
+  if (hash.get('key') || hash.get('tid')) {
+    if (hash.get('key')) { S.key = hash.get('key'); save('gmKey', S.key); }
     history.replaceState(null, '', location.pathname + location.search);
   }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

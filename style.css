@@ -141,5 +141,9 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .next-bus { background: var(--accent-soft); border-radius: 10px; padding: 8px 10px; font-size: 14px; line-height: 1.6; }
 .next-bus .count { font-weight: 700; color: var(--accent); }
 .next-bus .count.soon { color: #dc2626; }
+.tdx { margin-top: 6px; font-size: 13px; line-height: 1.6; }
+.tdx:empty { display: none; }
+.live { color: #16a34a; }
+.live.soon { color: #dc2626; }
 .best { display: inline-block; font-size: 11px; font-weight: 700; background: var(--accent); color: var(--on-accent); border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }
 .tab { font-size: 14px; }
