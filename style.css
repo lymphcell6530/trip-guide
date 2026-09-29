@@ -122,3 +122,24 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .qr img { background: #fff; padding: 8px; border-radius: 10px; width: 200px; height: 200px; image-rendering: pixelated; }
 .row { display: flex; gap: 8px; }
 .row.end { justify-content: flex-end; }
+
+/* 我要去：大眾運輸建議 */
+.go-form { display: flex; flex-direction: column; gap: 8px; padding: 12px 4px 4px; }
+.go-form input { flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.go-form select { flex: 1; min-width: 0; }
+.recent { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.recent button { font-size: 13px; padding: 4px 10px; }
+.place-pick button { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 10px 14px; }
+.place-pick button:last-child { border-bottom: 0; }
+.place-pick .addr { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.opt-head { padding: 12px; cursor: pointer; }
+.opt-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.opt-top .dur { font-size: 20px; font-weight: 700; }
+.opt-top .fare { font-weight: 700; color: var(--warm); }
+.legs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 8px 0; font-size: 13px; }
+.legs .arrow, .legs .walk { color: var(--muted); }
+.next-bus { background: var(--accent-soft); border-radius: 10px; padding: 8px 10px; font-size: 14px; line-height: 1.6; }
+.next-bus .count { font-weight: 700; color: var(--accent); }
+.next-bus .count.soon { color: #dc2626; }
+.best { display: inline-block; font-size: 11px; font-weight: 700; background: var(--accent); color: var(--on-accent); border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }
+.tab { font-size: 14px; }

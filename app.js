@@ -561,7 +561,9 @@ function switchTab(name) {
   $('#list-sights').classList.toggle('hidden', name !== 'sights');
   $('#list-food').classList.toggle('hidden', name !== 'food');
   $('#route-view').classList.toggle('hidden', name !== 'route');
-  $('#filters').classList.toggle('hidden', name === 'route');
+  $('#go-view')?.classList.toggle('hidden', name !== 'go');
+  $('#filters').classList.toggle('hidden', name === 'route' || name === 'go');
+  if (name === 'go') paintGoFrom();
 }
 
 // ---------- 路線：要花多少時間、怎麼走 ----------
@@ -683,6 +685,224 @@ function renderNavButtons(item) {
   $('#nav-actions').innerHTML = `<a class="go-btn" style="text-decoration:none" href="https://www.google.com/maps/dir/?${q}" target="_blank" rel="noopener">開啟 Google 地圖導航 ➜</a>
     <button class="ghost-btn" data-back="${esc(item.kind)}">← 回列表</button>`;
 }
+
+// ---------- 我要去：查大眾運輸（搭什麼、幾點來、多少錢） ----------
+const secs = (d) => parseInt(d || '0', 10) || 0;
+const hhmm = (d) => d.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
+const VEHICLE_ICON = { BUS: '🚌', INTERCITY_BUS: '🚌', TROLLEYBUS: '🚎', SUBWAY: '🚇', METRO_RAIL: '🚇', LIGHT_RAIL: '🚈', TRAM: '🚋', MONORAIL: '🚝', RAIL: '🚆', HEAVY_RAIL: '🚆', COMMUTER_TRAIN: '🚆', HIGH_SPEED_TRAIN: '🚄', LONG_DISTANCE_TRAIN: '🚆', FERRY: '⛴️', CABLE_CAR: '🚡', GONDOLA_LIFT: '🚡', FUNICULAR: '🚞' };
+
+function loadRecent() { try { return JSON.parse(localStorage.getItem('goRecent') || '[]'); } catch { return []; } }
+function saveRecent(p) {
+  const list = [p, ...loadRecent().filter((r) => r.name !== p.name)].slice(0, 6);
+  try { localStorage.setItem('goRecent', JSON.stringify(list)); } catch {}
+  paintRecent();
+}
+function paintRecent() {
+  const box = $('#goRecent');
+  if (!box) return;
+  const list = loadRecent();
+  box.innerHTML = list.length ? `<span class="small">最近：</span>${list.map((r, i) => `<button type="button" class="chip" data-recent="${i}">${esc(r.name)}</button>`).join('')}` : '';
+}
+function paintGoFrom() {
+  const el = $('#goFrom');
+  if (!el) return;
+  el.textContent = S.manual ? ($('#placeQuery')?.value || '你選的位置') : '你目前的位置';
+  paintRecent();
+}
+
+async function transitOptions(dest) {
+  const body = {
+    origin: { location: { latLng: { latitude: S.origin.lat, longitude: S.origin.lng } } },
+    destination: dest.placeId ? { placeId: dest.placeId } : { location: { latLng: { latitude: dest.loc.lat, longitude: dest.loc.lng } } },
+    travelMode: 'TRANSIT',
+    computeAlternativeRoutes: true,
+    languageCode: 'zh-TW',
+    units: 'METRIC',
+  };
+  const pref = $('#goPref').value, mode = $('#goModes').value;
+  if (pref || mode) {
+    body.transitPreferences = {};
+    if (pref) body.transitPreferences.routingPreference = pref;
+    if (mode === 'BUS') body.transitPreferences.allowedTravelModes = ['BUS'];
+    if (mode === 'RAIL') body.transitPreferences.allowedTravelModes = ['SUBWAY', 'TRAIN', 'LIGHT_RAIL', 'RAIL'];
+  }
+  const r = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': S.key,
+      'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.localizedValues,routes.travelAdvisory.transitFare,routes.legs.steps.travelMode,routes.legs.steps.staticDuration,routes.legs.steps.distanceMeters,routes.legs.steps.navigationInstruction,routes.legs.steps.localizedValues,routes.legs.steps.transitDetails',
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error?.message || `Routes ${r.status}`);
+  const now = Date.now();
+  return (data.routes || []).map((rt) => {
+    const steps = rt.legs?.[0]?.steps || [];
+    // 連續的走路步驟合併成一段，公車／捷運每段保留
+    const segs = [];
+    for (const s of steps) {
+      if (s.transitDetails) {
+        const td = s.transitDetails, line = td.transitLine || {};
+        segs.push({
+          type: 'transit',
+          icon: VEHICLE_ICON[line.vehicle?.type] || '🚌',
+          vehicle: line.vehicle?.name?.text || '',
+          line: line.nameShort || line.name || '',
+          lineName: line.name || '',
+          color: line.color || '#0f766e', textColor: line.textColor || '#ffffff',
+          agency: line.agencies?.[0]?.name || '',
+          from: td.stopDetails?.departureStop?.name, to: td.stopDetails?.arrivalStop?.name,
+          dep: td.stopDetails?.departureTime ? new Date(td.stopDetails.departureTime) : null,
+          arr: td.stopDetails?.arrivalTime ? new Date(td.stopDetails.arrivalTime) : null,
+          headsign: td.headsign, stops: td.stopCount,
+          sec: secs(s.staticDuration),
+        });
+      } else {
+        const last = segs[segs.length - 1];
+        if (last?.type === 'walk') { last.sec += secs(s.staticDuration); last.m += s.distanceMeters || 0; }
+        else segs.push({ type: 'walk', sec: secs(s.staticDuration), m: s.distanceMeters || 0 });
+      }
+    }
+    const transits = segs.filter((g) => g.type === 'transit');
+    const first = transits[0];
+    const walkBefore = segs[0]?.type === 'walk' ? segs[0].sec : 0;
+    const f = rt.travelAdvisory?.transitFare;
+    const fareNum = f ? Number(f.units || 0) + Number(f.nanos || 0) / 1e9 : null;
+    const cur = f?.currencyCode;
+    const sym = cur === 'TWD' ? 'NT$' : cur === 'JPY' ? '¥' : cur ? `${cur} ` : '';
+    return {
+      sec: secs(rt.duration),
+      meters: rt.distanceMeters,
+      arrive: new Date(now + secs(rt.duration) * 1000),
+      leaveBy: first?.dep ? new Date(first.dep.getTime() - walkBefore * 1000) : null,
+      fare: rt.localizedValues?.transitFare?.text || (fareNum ? `${sym}${fareNum}` : null),
+      transfers: Math.max(0, transits.length - 1),
+      walkSec: segs.filter((g) => g.type === 'walk').reduce((a, g) => a + g.sec, 0),
+      segs, first,
+      path: rt.polyline?.encodedPolyline ? google.maps.geometry.encoding.decodePath(rt.polyline.encodedPolyline) : [],
+    };
+  });
+}
+
+function countdown(dep) {
+  const min = Math.round((dep.getTime() - Date.now()) / 60000);
+  if (min <= 0) return { text: '即將發車', soon: true };
+  return { text: `還有 ${min} 分鐘`, soon: min <= 5 };
+}
+
+function lineChip(g) {
+  return `<span class="transit-line" style="background:${esc(g.color)};color:${esc(g.textColor)}">${g.icon} ${esc(g.line || g.vehicle)}</span>`;
+}
+
+function optionCard(o, i, dest) {
+  const legs = o.segs.map((g) => (g.type === 'walk'
+    ? `<span class="walk">🚶${Math.max(1, Math.round(g.sec / 60))}分</span>`
+    : lineChip(g))).join('<span class="arrow">›</span>');
+  const f = o.first;
+  const cd = f?.dep ? countdown(f.dep) : null;
+  const next = f
+    ? `<div class="next-bus">${f.icon} <b>${esc(f.line || f.lineName)}</b> ${esc(f.vehicle)}${f.headsign ? `（往 ${esc(f.headsign)}）` : ''}<br>
+        在「${esc(f.from)}」上車${f.dep ? `，<b>${hhmm(f.dep)}</b> 發車 <span class="count${cd.soon ? ' soon' : ''}" data-dep="${f.dep.getTime()}">${cd.text}</span>` : ''}
+        ${o.leaveBy ? `<br>👉 最晚 <b>${hhmm(o.leaveBy)}</b> 要出發走去車站` : ''}</div>`
+    : '<div class="next-bus">這段路走路就到了，不用搭車。</div>';
+  const steps = o.segs.map((g) => (g.type === 'walk'
+    ? `<li>🚶 走路 ${fmtDur(g.sec)}（${fmtDist(g.m)}）</li>`
+    : `<li>${lineChip(g)} ${esc(g.from)} → ${esc(g.to)}${g.headsign ? `（往 ${esc(g.headsign)}）` : ''}
+        <div class="sd">${g.dep ? `${hhmm(g.dep)} 發車 · ` : ''}${g.arr ? `${hhmm(g.arr)} 到站 · ` : ''}${g.stops ? `坐 ${g.stops} 站 · ` : ''}${fmtDur(g.sec)}${g.agency ? ` · ${esc(g.agency)}` : ''}</div></li>`)).join('');
+  const q = new URLSearchParams({ api: '1', origin: `${S.origin.lat},${S.origin.lng}`, destination: dest.name, travelmode: 'transit' });
+  return `<article class="card"><div class="opt-head" data-opt="${i}">
+      <div class="opt-top"><span class="dur">${fmtDur(o.sec)}${i === 0 ? '<span class="best">推薦</span>' : ''}</span>
+        <span class="fare">${o.fare ? `💰 ${esc(o.fare)}` : '<span class="small">車資未提供</span>'}</span></div>
+      <div class="small">現在出發 → 約 ${hhmm(o.arrive)} 抵達 · ${o.transfers ? `轉乘 ${o.transfers} 次` : '不用轉乘'} · 走路共 ${fmtDur(o.walkSec)}</div>
+      <div class="legs">${legs}</div>
+      ${next}
+      <div class="small" style="margin-top:6px">點這裡看完整搭乘步驟 ▾</div>
+    </div>
+    <div class="detail hidden"><h4>完整搭乘步驟</h4><ol class="steps">${steps}</ol>
+      <div class="actions"><button class="go-btn" data-optmap="${i}">在地圖上看</button>
+      <a class="ghost-btn" href="https://www.google.com/maps/dir/?${q}" target="_blank" rel="noopener">開啟 Google 地圖</a></div></div>
+  </article>`;
+}
+
+async function planTrip(dest) {
+  const box = $('#goResults');
+  $('#goQuery').value = dest.name;
+  if (!S.origin) { box.innerHTML = '<div class="empty">還沒拿到你的位置，請稍等一下或按 📍。</div>'; return; }
+  if (!S.map) { box.innerHTML = '<div class="empty">要先在 ⚙️ 設定 Google Maps 金鑰，才能查交通。</div>'; return; }
+  saveRecent({ name: dest.name, loc: dest.loc });
+  box.innerHTML = '<div class="empty">正在查詢班次…</div>';
+  try {
+    const opts = await transitOptions(dest);
+    S.goDest = dest; S.goOpts = opts;
+    if (!opts.length) {
+      box.innerHTML = '<div class="empty">找不到大眾運輸路線（可能太近、太晚沒車，或這個地區沒有 Google 的大眾運輸資料）。<br>可以用「🔎 搜尋地點」找到那裡，再按「帶我去」看走路或開車。</div>';
+      return;
+    }
+    box.innerHTML = `<div class="small" style="padding:8px 4px">前往「${esc(dest.name)}」，找到 ${opts.length} 種搭法。班次時間來自 Google 時刻表，實際以站牌／車站公告為準。</div>`
+      + opts.map((o, i) => optionCard(o, i, dest)).join('');
+    showOptionOnMap(0);
+  } catch (e) {
+    console.warn(e);
+    box.innerHTML = `<div class="empty">查詢失敗：${esc(e.message)}</div>`;
+  }
+}
+
+function showOptionOnMap(i) {
+  const o = S.goOpts?.[i];
+  if (!o || !S.map || !o.path.length) return;
+  if (S.routeLine) S.routeLine.setMap(null);
+  S.routeLine = new google.maps.Polyline({ map: S.map, path: o.path, strokeColor: '#2563eb', strokeWeight: 5, strokeOpacity: 0.85 });
+  const b = new google.maps.LatLngBounds();
+  o.path.forEach((p) => b.extend(p));
+  S.map.fitBounds(b, 40);
+}
+
+// 每 20 秒更新「還有幾分鐘」
+setInterval(() => {
+  document.querySelectorAll('[data-dep]').forEach((el) => {
+    const cd = countdown(new Date(+el.dataset.dep));
+    el.textContent = cd.text;
+    el.classList.toggle('soon', cd.soon);
+  });
+}, 20000);
+
+$('#goForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = $('#goQuery').value.trim();
+  if (!q) return;
+  $('#goQuery').blur();
+  const box = $('#goResults');
+  box.innerHTML = '<div class="empty">搜尋目的地…</div>';
+  try {
+    const list = await findPlaces(q);
+    if (!list.length) { box.innerHTML = '<div class="empty">找不到這個地方，換個說法試試看。</div>'; return; }
+    if (list.length === 1) { planTrip(list[0]); return; }
+    S.goHits = list;
+    box.innerHTML = '<div class="small" style="padding:8px 4px">你要去的是哪一個？</div><div class="card place-pick">'
+      + list.map((p, i) => `<button type="button" data-gohit="${i}">${esc(p.name)}<span class="addr">${esc(p.addr)}</span></button>`).join('')
+      + '</div>';
+  } catch (err) {
+    console.warn(err);
+    box.innerHTML = '<div class="empty">搜尋失敗，請稍後再試。</div>';
+  }
+});
+$('#go-view')?.addEventListener('click', (e) => {
+  const hit = e.target.closest('[data-gohit]');
+  if (hit) { planTrip(S.goHits[+hit.dataset.gohit]); return; }
+  const rec = e.target.closest('[data-recent]');
+  if (rec) { planTrip(loadRecent()[+rec.dataset.recent]); return; }
+  const m = e.target.closest('[data-optmap]');
+  if (m) { showOptionOnMap(+m.dataset.optmap); $('#map').scrollIntoView({ behavior: 'smooth' }); return; }
+  const head = e.target.closest('[data-opt]');
+  if (head) {
+    head.parentElement.querySelector('.detail').classList.toggle('hidden');
+    showOptionOnMap(+head.dataset.opt);
+  }
+});
+$('#goPref')?.addEventListener('change', () => S.goDest && planTrip(S.goDest));
+$('#goModes')?.addEventListener('change', () => S.goDest && planTrip(S.goDest));
 
 // ---------- 通知 ----------
 function notify(title, body) {

@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=9">
+  <link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
   <header class="topbar">
@@ -36,9 +36,10 @@
 
     <section class="panel">
       <nav class="tabs">
-        <button class="tab active" data-tab="sights">🏯 歷史景點</button>
-        <button class="tab" data-tab="food">🍜 在地美食</button>
-        <button class="tab" data-tab="route" id="tabRoute" disabled>🚶 怎麼去</button>
+        <button class="tab active" data-tab="sights">🏯 景點</button>
+        <button class="tab" data-tab="food">🍜 美食</button>
+        <button class="tab" data-tab="go">🚌 我要去</button>
+        <button class="tab" data-tab="route" id="tabRoute" disabled>🧭 路線</button>
       </nav>
 
       <div class="filters" id="filters">
@@ -56,6 +57,29 @@
       <div id="list-sights" class="list"></div>
       <div id="list-food" class="list hidden"></div>
       <div id="route-view" class="list hidden"></div>
+      <div id="go-view" class="list hidden">
+        <form id="goForm" class="go-form" autocomplete="off">
+          <div class="small">從<b id="goFrom">你目前的位置</b>出發，要去哪裡？</div>
+          <div class="row">
+            <input id="goQuery" type="search" placeholder="輸入目的地，例如：高雄車站、京都車站" enterkeyhint="search">
+            <button type="submit" class="chip primary">查交通</button>
+          </div>
+          <div class="row">
+            <select id="goPref">
+              <option value="">最快到達</option>
+              <option value="LESS_WALKING">少走路</option>
+              <option value="FEWER_TRANSFERS">少轉乘</option>
+            </select>
+            <select id="goModes">
+              <option value="">公車、捷運、火車都可以</option>
+              <option value="BUS">只搭公車</option>
+              <option value="RAIL">只搭捷運／火車／電車</option>
+            </select>
+          </div>
+          <div id="goRecent" class="recent"></div>
+        </form>
+        <div id="goResults"></div>
+      </div>
     </section>
   </main>
 
@@ -90,6 +114,6 @@
     </form>
   </dialog>
 
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>
