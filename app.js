@@ -799,6 +799,7 @@ async function transitOptions(dest) {
 function countdown(dep) {
   const min = Math.round((dep.getTime() - Date.now()) / 60000);
   if (min <= 0) return { text: '即將發車', soon: true };
+  if (min >= 60) return { text: `還有 ${Math.floor(min / 60)} 小時${min % 60 ? ` ${min % 60} 分` : ''}`, soon: false };
   return { text: `還有 ${min} 分鐘`, soon: min <= 5 };
 }
 
@@ -969,14 +970,27 @@ async function tdxToken() {
 }
 
 const tdxCache = new Map();
+// 一次只送一個請求、間隔 300 毫秒，避免超過 TDX 的頻率限制
+let tdxChain = Promise.resolve();
+function tdxQueue(job) {
+  const run = tdxChain.then(job);
+  tdxChain = run.catch(() => {}).then(() => new Promise((ok) => setTimeout(ok, 300)));
+  return run;
+}
 async function tdxGet(path, params = {}, ttl = 0) {
   const q = new URLSearchParams({ $format: 'JSON', ...params });
   const url = `${TDX}${path}?${q}`;
   const hit = tdxCache.get(url);
   if (ttl && hit && hit.exp > Date.now()) return hit.data;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${await tdxToken()}` } });
-  if (!r.ok) throw new Error(`TDX ${r.status}`);
-  const data = await r.json();
+  const data = await tdxQueue(async () => {
+    for (let tries = 0; ; tries++) {
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${await tdxToken()}` } });
+      // 免費方案每秒只能查幾次：被擋（429）就等一下再試
+      if (r.status === 429 && tries < 4) { await new Promise((ok) => setTimeout(ok, 1200 * (tries + 1))); continue; }
+      if (!r.ok) throw new Error(`TDX ${r.status}`);
+      return r.json();
+    }
+  });
   if (ttl) tdxCache.set(url, { data, exp: Date.now() + ttl });
   return data;
 }
