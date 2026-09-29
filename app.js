@@ -998,9 +998,16 @@ async function cityCodeAt(loc) {
   return code;
 }
 
-// Google 的路線名稱可能是「紅3林園幹線」，TDX 是「紅3」：準備幾個候選名稱
+// Google 叫「69A」、TDX 叫「69A小港幹線」：取路線號碼開頭（69A、紅3、橘12…）當搜尋條件，再用站牌座標確認
 function routeCandidates(g) {
-  const c = [g.line, g.lineName, String(g.line || '').replace(/[一-鿿]{2,}(幹線|線|路)?$/, '')].map((x) => String(x || '').trim()).filter(Boolean);
+  const c = [];
+  for (const n of [g.line, g.lineName]) {
+    const t = String(n || '').trim();
+    if (!t) continue;
+    const code = t.match(/^[一-鿿]?[A-Za-z]*\d+[A-Za-z]?/)?.[0];
+    if (code) c.push(code);
+    c.push(t);
+  }
   return [...new Set(c)];
 }
 
@@ -1015,7 +1022,7 @@ async function findBusStop(g) {
   for (const scope of scopes) {
     for (const name of routeCandidates(g)) {
       let routes;
-      try { routes = await tdxGet(`/v2/Bus/StopOfRoute/${scope}`, { $filter: `RouteName/Zh_tw eq '${odataStr(name)}'` }, 3600e3); } catch (e) { if (/401|403/.test(e.message)) throw e; continue; }
+      try { routes = await tdxGet(`/v2/Bus/StopOfRoute/${scope}`, { $filter: `startswith(RouteName/Zh_tw,'${odataStr(name)}')` }, 3600e3); } catch (e) { if (/401|403/.test(e.message)) throw e; continue; }
       let best = null;
       for (const rt of routes || []) {
         const stops = rt.Stops || [];
