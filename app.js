@@ -122,7 +122,13 @@ function startGeolocation() {
   navigator.geolocation.watchPosition(
     (p) => {
       S.gps = { lat: p.coords.latitude, lng: p.coords.longitude };
-      if (!S.manual) { S.origin = S.gps; drawUser(); }
+      if (!S.manual) {
+        const first = !S.origin;
+        S.origin = S.gps;
+        drawUser();
+        // 第一次拿到定位時，把地圖移到你所在的位置
+        if (first && S.map) { S.map.setCenter(S.gps); S.map.setZoom(15); }
+      }
       checkArrival();
     },
     (err) => setStatus(`無法取得定位（${err.message}）。可在地圖上點一個位置來搜尋。`),
@@ -153,6 +159,7 @@ async function search(label, arrived = false) {
   if (!S.origin) return;
   S.searching = true;
   if (!S.manual) S.lastSearch = { ...S.origin };
+  if (S.map) S.map.panTo(S.origin);
   const radius = +$('#radius').value;
   setStatus(`🔎 正在搜尋${label}附近…`);
   $('#list-sights').innerHTML = $('#list-food').innerHTML = '<div class="empty">搜尋中…</div>';
