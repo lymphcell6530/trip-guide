@@ -863,7 +863,14 @@ async function planTrip(dest) {
       return;
     }
     if (!opts.length) {
-      box.innerHTML = '<div class="empty">找不到大眾運輸路線（可能太近、太晚沒車，或這個地區沒有 Google 的大眾運輸資料）。<br>可以用「🔎 搜尋地點」找到那裡，再按「帶我去」看走路或開車。</div>';
+      // 日本等地區：Google 不把大眾運輸資料開放給外部 App，改用 Google 地圖 App 查
+      const q = new URLSearchParams({ api: '1', origin: `${S.origin.lat},${S.origin.lng}`, destination: dest.name, travelmode: 'transit' });
+      const gm = `https://www.google.com/maps/dir/?${q}`;
+      const why = S.country === 'JP'
+        ? 'Google 沒有把日本的電車／公車時刻開放給其他 App 使用，所以這裡查不到。<br>按下面的按鈕，會用 <b>Google 地圖 App</b> 直接幫你查：搭哪條線、幾點發車、票價多少。'
+        : '這裡查不到大眾運輸路線（可能太近、這個時間沒車，或這個地區沒有 Google 的大眾運輸資料）。<br>可以用 Google 地圖 App 再確認一次。';
+      box.innerHTML = `<div class="card"><div class="detail"><h4>前往「${esc(dest.name)}」</h4><div>${why}</div>
+        <div class="actions"><a class="go-btn" style="text-decoration:none" href="${esc(gm)}" target="_blank" rel="noopener">用 Google 地圖查電車・公車 ➜</a></div></div></div>`;
       return;
     }
     box.innerHTML = `<div class="small" style="padding:8px 4px">前往「${esc(dest.name)}」，找到 ${opts.length} 種搭法（依抵達時間排序）。班次時間來自 Google 時刻表，實際以站牌／車站公告為準。</div>`
