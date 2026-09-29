@@ -752,7 +752,7 @@ async function transitOptions(dest) {
           vtype: line.vehicle?.type || '',
           icon: VEHICLE_ICON[line.vehicle?.type] || '🚌',
           vehicle: line.vehicle?.name?.text || '',
-          line: line.nameShort || line.name || '',
+          line: zhLine(line.nameShort || line.name || ''),
           lineName: line.name || '',
           color: line.color || '#0f766e', textColor: line.textColor || '#ffffff',
           agency: line.agencies?.[0]?.name || '',
@@ -761,7 +761,7 @@ async function transitOptions(dest) {
           toLoc: td.stopDetails?.arrivalStop?.location?.latLng ? { lat: td.stopDetails.arrivalStop.location.latLng.latitude, lng: td.stopDetails.arrivalStop.location.latLng.longitude } : null,
           dep: td.stopDetails?.departureTime ? new Date(td.stopDetails.departureTime) : null,
           arr: td.stopDetails?.arrivalTime ? new Date(td.stopDetails.arrivalTime) : null,
-          headsign: td.headsign, stops: td.stopCount,
+          headsign: String(td.headsign || '').replace(/^往\s*/, ''), stops: td.stopCount,
           sec: secs(s.staticDuration),
         });
       } else {
@@ -801,6 +801,15 @@ function countdown(dep) {
   if (min <= 0) return { text: '即將發車', soon: true };
   if (min >= 60) return { text: `還有 ${Math.floor(min / 60)} 小時${min % 60 ? ` ${min % 60} 分` : ''}`, soon: false };
   return { text: `還有 ${min} 分鐘`, soon: min <= 5 };
+}
+
+const LINE_ZH = [
+  [/Tze-?Chiang|Tzu-?Chiang/i, '自強號'], [/Chu-?Kuang|Chu-?Guang/i, '莒光號'], [/Puyuma/i, '普悠瑪'], [/Taroko/i, '太魯閣'],
+  [/Local Express/i, '區間快車'], [/Local Train|^Local$/i, '區間車'], [/Fu-?Hsing/i, '復興號'], [/High[- ]Speed Rail|THSR/i, '高鐵'],
+];
+function zhLine(n) {
+  const hit = LINE_ZH.find(([re]) => re.test(n));
+  return hit ? hit[1] : n;
 }
 
 function lineChip(g) {
@@ -1154,7 +1163,9 @@ function railHtml(kind, info) {
 function segKind(g) {
   const a = `${g.agency} ${g.lineName} ${g.vehicle}`;
   if (/高鐵|High Speed/i.test(a) || g.vtype === 'HIGH_SPEED_TRAIN') return 'THSR';
-  if (/臺鐵|台鐵|Taiwan Railway/i.test(a)) return 'TRA';
+  if (/臺鐵|台鐵|臺灣鐵路|台灣鐵路|Taiwan Railway/i.test(a)) return 'TRA';
+  // 台灣的一般鐵路（不是捷運、輕軌）就當作台鐵
+  if (S.country === 'TW' && /RAIL|TRAIN/.test(g.vtype) && !/SUBWAY|METRO|LIGHT_RAIL|MONORAIL/.test(g.vtype) && !/捷運|Metro|MRT/i.test(a)) return 'TRA';
   if (/BUS/.test(g.vtype)) return 'BUS';
   return null;
 }
