@@ -1139,8 +1139,16 @@ async function railInfo(kind, g) {
   let fare = null;
   try {
     const f = await tdxGet(kind === 'THSR' ? `/v2/Rail/THSR/ODFare/${o}/to/${d}` : `/v3/Rail/TRA/ODFare/${o}/to/${d}`, {}, 864e5);
-    const p = collectPrices(f);
-    if (p.length) fare = { min: Math.min(...p), max: Math.max(...p) };
+    // 只取成人單程全票（TicketType 1、FareClass 1）
+    const rows = (kind === 'THSR' ? (f || []) : (f.ODFares || [])).flatMap((x) => x.Fares || [])
+      .filter((x) => x.TicketType === 1 && x.FareClass === 1 && x.Price > 0);
+    if (kind === 'THSR') {
+      const cab = (c) => rows.find((x) => x.CabinClass === c)?.Price;
+      fare = { thsr: [['標準車廂', cab(1)], ['自由座', cab(3)], ['商務車廂', cab(2)]].filter(([, v]) => v) };
+    } else {
+      const p = rows.filter((x) => x.CabinClass === 1).map((x) => x.Price);
+      if (p.length) fare = { min: Math.min(...p), max: Math.max(...p) };
+    }
   } catch (e) { console.warn('fare', e); }
   // 台鐵誤點（只查第一班）
   if (kind === 'TRA' && trains[0]) {
@@ -1155,7 +1163,9 @@ async function railInfo(kind, g) {
 
 function railHtml(kind, info) {
   if (!info) return '<span class="small">官方資料找不到這兩個車站</span>';
-  const fare = info.fare ? `💰 官方票價 NT$${info.fare.min}${info.fare.max !== info.fare.min ? `–${info.fare.max}（依車種／車廂）` : ''}` : '';
+  let fare = '';
+  if (info.fare?.thsr?.length) fare = `💰 官方全票：${info.fare.thsr.map(([n, v]) => `${n} NT$${v}`).join('・')}`;
+  else if (info.fare?.min) fare = `💰 官方全票 NT$${info.fare.min}${info.fare.max !== info.fare.min ? `–${info.fare.max}（區間車較便宜，自強號較貴）` : ''}`;
   const list = info.trains.map((t, k) => `${hhmm(t.dep)} ${esc(t.type)}${t.no ? ` ${esc(t.no)}次` : ''}${k === 0 && t.delay != null ? (t.delay > 0 ? ` <b class="live soon">誤點 ${t.delay} 分</b>` : ' <b class="live">準點</b>') : ''}`).join('、');
   return `🛰️ 官方${kind === 'THSR' ? '高鐵' : '台鐵'}時刻：${list || '今天已無班次'}${fare ? `<br>${fare}` : ''}`;
 }
