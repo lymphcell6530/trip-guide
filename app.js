@@ -2153,10 +2153,12 @@ async function personSearch() {
     }
     list.sort((a, b) => (b.why ? 1 : 0) - (a.why ? 1 : 0) || b.who.length - a.who.length || b.score - a.score || a.dist - b.dist);
     S.personList = list;
+    S.personThemes = persons;
     S.personCenterNow = center;
     drawPersonMarkers(list);
     box.innerHTML = `${head}
       <div class="small" style="padding:8px 4px">${km ? `在「${esc(center.name)}」附近 ${km} 公里內，` : ''}找到 ${list.length} 個跟 <b>${esc(who)}</b> 有關的地方（地圖上紫色數字）。</div>
+      <div class="actions"><button type="button" class="go-btn" data-pdf="1">📄 下載 PDF 行程</button></div>
       ${list.map((p, k) => `<article class="card" id="pp-${k}"><div class="card-head" style="cursor:default">
           ${p.thumb ? `<img class="thumb" src="${esc(p.thumb)}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
           <div class="card-body"><h3>${k + 1}. ${esc(p.labelZh && p.labelZh !== p.label ? `${p.labelZh}（${p.label}）` : p.label)}</h3>
@@ -2173,6 +2175,7 @@ async function personSearch() {
               <button type="button" class="ghost-btn" data-skip="${esc(p.title)}">✕ 不去</button>
             </div></div></article>`).join('')}
       ${itineraryHtml()}
+      <div class="actions"><button type="button" class="go-btn" data-pdf="1">📄 下載 PDF 行程</button></div>
       <div class="small" style="padding:8px 4px">資料來源：維基百科。說明是從條目裡「提到這些人物／主題」的句子整理出來的；年份取自條目裡創建、興建那一句，僅供參考。</div>`;
     renderPlan();
   } catch (e) {
@@ -2186,6 +2189,8 @@ $('#person-view')?.addEventListener('change', (e) => { if (e.target.id === 'plan
 $('#personWhere')?.addEventListener('change', () => $('#personPlace').classList.toggle('hidden', $('#personWhere').value !== 'place'));
 $('#person-view')?.addEventListener('click', (e) => {
   if (e.target.id === 'planOrder') return;
+  const pdfBtn = e.target.closest('[data-pdf]');
+  if (pdfBtn) { buildPdf(pdfBtn); return; }
   const sk = e.target.closest('[data-skip],[data-unskip]');
   if (sk) { toggleSkip(sk.dataset.skip || sk.dataset.unskip); return; }
   const leg = e.target.closest('[data-leg]');
@@ -2222,6 +2227,105 @@ function personFromReader(name) {
   switchTab('person');
   $('#personQuery').value = name;
   personSearch();
+}
+
+// ---------- 📄 下載 PDF：封面、參訪路線、景點介紹；背景用主題相關照片淡化 ----------
+const loadScript = (src) => new Promise((ok, fail) => {
+  if ([...document.scripts].some((s) => s.src === src)) { ok(); return; }
+  const s = document.createElement('script');
+  s.src = src; s.onload = ok; s.onerror = () => fail(new Error('載入 PDF 工具失敗'));
+  document.head.appendChild(s);
+});
+
+// 較大張的條目照片（背景用）
+async function bigImages(items) {
+  const out = new Map();
+  const byLang = {};
+  items.forEach((it) => (byLang[it.lang] ||= []).push(it.title));
+  for (const [lang, titles] of Object.entries(byLang)) {
+    for (let i = 0; i < titles.length; i += 40) {
+      const d = await wikiApi({ action: 'query', titles: titles.slice(i, i + 40).join('|'), prop: 'pageimages', piprop: 'thumbnail', pithumbsize: '960', pilimit: 'max', redirects: '1' }, lang).catch(() => ({}));
+      const norm = new Map((d.query?.redirects || []).concat(d.query?.normalized || []).map((r) => [r.to, r.from]));
+      Object.values(d.query?.pages || {}).forEach((p) => { if (p.thumbnail) out.set(`${lang}:${norm.get(p.title) || p.title}`, p.thumbnail.source); });
+    }
+  }
+  return out;
+}
+
+const plain = (html) => { const d = document.createElement('div'); d.innerHTML = String(html || '').replace(/<br\s*\/?>/g, '　'); return d.textContent.trim(); };
+
+async function buildPdf(btn) {
+  const themes = S.personThemes || [];
+  const list = S.personList || [];
+  if (!list.length) return;
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '產生 PDF 中…';
+  try {
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js');
+    const imgs = await bigImages([...themes, ...list]);
+    const img = (it) => imgs.get(`${it.lang}:${it.title}`) || it.thumb || '';
+    const center = S.personCenterNow || { name: '' };
+    const title = themes.map((t) => t.name).join('・');
+    const today = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' });
+    const coverBg = img(themes[0] || {}) || img(list[0]);
+    const page = (bg, inner, n) => `<section class="pdf-page">${bg ? `<div class="pdf-bg" style="background-image:url('${esc(bg)}')"></div>` : ''}
+      <div class="pdf-inner">${inner}</div><div class="pdf-foot">旅途即時導覽　·　資料來源：維基百科、Google 地圖、NAVITIME、交通部 TDX　·　${n}</div></section>`;
+    const pages = [];
+    // 封面
+    pages.push(page(coverBg, `
+      <div class="pdf-kicker">主題行程</div>
+      <h1>${esc(center.name ? `${center.name}・` : '')}${esc(title)}</h1>
+      <div class="pdf-sub">${esc(today)}　·　共 ${(S.personOrder || list).length} 站　·　${S.planOrder === 'year' ? '照年代排' : '照遠近排'}</div>
+      ${themes.map((t) => `<div class="pdf-theme">${t.thumb ? `<img src="${esc(t.thumb)}" crossorigin="anonymous">` : ''}
+        <div><h3>${esc(t.name)}</h3><p>${esc((t.introZh || '').slice(0, 260))}${(t.introZh || '').length > 260 ? '…' : ''}</p></div></div>`).join('')}`, 1));
+    // 參訪路線
+    const order = S.personOrder || [];
+    if (order.length) {
+      const legs = await Promise.all(order.map((p) => legSummary(p).catch(() => null)));
+      const etas = order.map((p, k) => $(`#eta-${k}`)?.textContent || '');
+      pages.push(page(img(order[0]), `
+        <h2>🗺️ 參訪路線</h2><div class="pdf-sub">從「${esc(center.name)}」出發　·　每站預留 ${STAY_MIN} 分鐘參觀</div>
+        <ol class="pdf-route">${order.map((p, k) => `<li>
+          <div class="pdf-leg">🚏 ${esc(plain(legs[k]?.html) || `約 ${fmtDist(p.hop)}`)}</div>
+          <div class="pdf-stop"><span class="pdf-no">${k + 1}</span><b>${esc(p.labelZh || p.label)}</b>${p.year ? `<span class="pdf-yr">${p.year} 年</span>` : ''}<span class="pdf-eta">${esc(etas[k])}</span></div>
+          ${p.why ? `<div class="pdf-why">${esc(firstSentence(p.why))}</div>` : ''}</li>`).join('')}</ol>
+        <div class="pdf-total">${esc(plain($('#planTotal')?.innerHTML || '').split('時間是估算的')[0])}</div>`, pages.length + 1));
+    }
+    // 景點介紹（每頁 3 個，照參訪順序）
+    const places = order.length ? order : list;
+    for (let i = 0; i < places.length; i += 3) {
+      const group = places.slice(i, i + 3);
+      pages.push(page(img(group[0]), `<h2>📜 景點介紹 ${i + 1}–${i + group.length}</h2>
+        ${group.map((p, k) => `<div class="pdf-place">
+          ${img(p) ? `<img src="${esc(img(p))}" crossorigin="anonymous">` : '<div class="pdf-noimg"></div>'}
+          <div><h3>${i + k + 1}. ${esc(p.labelZh || p.label)}</h3>
+            <div class="pdf-meta">${p.year ? `🏛 約 ${p.year} 年　` : ''}📏 距出發地 ${fmtDist(p.dist)}${p.who?.length ? `　👤 ${esc(p.who.join('、'))}` : ''}</div>
+            <p>${esc((p.why || '（條目沒有直接寫到，詳細內容請看維基百科）').slice(0, 330))}${(p.why || '').length > 330 ? '…' : ''}</p></div></div>`).join('')}`, pages.length + 1));
+    }
+    const box = document.createElement('div');
+    box.className = 'pdf-root';
+    box.innerHTML = pages.join('');
+    document.body.appendChild(box);
+    // 等圖片載完
+    await Promise.all([...box.querySelectorAll('img')].map((im) => (im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; }))));
+    const file = `${center.name ? `${center.name}_` : ''}${title}_行程.pdf`.replace(/[\\/:*?"<>|\s]+/g, '_');
+    const worker = html2pdf().set({
+      margin: 0, filename: file,
+      image: { type: 'jpeg', quality: 0.9 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: 794 },
+      jsPDF: { unit: 'px', format: [794, 1123], orientation: 'portrait', hotfixes: ['px_scaling'] },
+      pagebreak: { mode: ['css'], after: '.pdf-page' },
+    }).from(box);
+    if (btn.dataset.test) { S.pdfBlob = await worker.outputPdf('blob'); } else { await worker.save(); }
+    box.remove();
+    btn.textContent = '✅ 已下載';
+    setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 2500);
+  } catch (e) {
+    console.warn(e);
+    btn.textContent = `下載失敗：${e.message}`;
+    setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 4000);
+  }
 }
 
 // ---------- 通知 ----------
