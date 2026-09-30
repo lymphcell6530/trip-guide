@@ -879,7 +879,9 @@ const NT_MOVE = {
 const yen = (f) => (f?.unit_0 ? `¥${f.unit_0}${f.unit_48 && f.unit_48 !== f.unit_0 ? `（IC 卡 ¥${f.unit_48}）` : ''}` : null);
 
 async function japanOptions(from, dest) {
-  const q = new URLSearchParams({ start: `${from.loc.lat},${from.loc.lng}`, goal: `${dest.loc.lat},${dest.loc.lng}`, limit: '5' });
+  // NAVITIME 一定要出發時間，用日本時間（UTC+9）
+  const jst = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 19);
+  const q = new URLSearchParams({ start: `${from.loc.lat},${from.loc.lng}`, goal: `${dest.loc.lat},${dest.loc.lng}`, start_time: jst, limit: '5' });
   const r = await fetch(`https://${NT_HOST}/route_transit?${q}`, { headers: { 'x-rapidapi-key': S.rapidKey, 'x-rapidapi-host': NT_HOST } });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.message || `NAVITIME ${r.status}`);
