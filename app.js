@@ -1775,7 +1775,7 @@ document.addEventListener('click', (e) => {
 
 // ---------- 👤 人物：找跟歷史人物有關、可以參觀的地方，並說明為什麼要去 ----------
 const stripParen = (t) => String(t || '').replace(/\s*[（(].*?[)）]\s*$/, '');
-const SKIP_PLACE = /(爭議|争議|事件|選舉|選区|選區|列表|一覧|年表)/;
+const SKIP_PLACE = /(爭議|争議|事件|選舉|選区|選區|列表|一覧|年表|電視台|电视台|放送|テレビ|ラジオ|新聞|株式会社|有限公司|球場|スタジアム|世界遺產|世界遺産|古跡$|古蹟$|構成資産|地區的|地域の)/;
 
 async function resolvePerson(name) {
   for (const lang of ['zh', 'ja']) {
@@ -1862,6 +1862,19 @@ async function fullText(lang, title) {
   const d = await wikiApi({ action: 'query', prop: 'extracts', explaintext: '1', titles: title, redirects: '1' }, lang);
   return Object.values(d.query?.pages || {})[0]?.extract || '';
 }
+// 創建年份：先找有「創建、興建、開基…」的句子裡的年份；沒有就取開頭段落裡最早的年份
+const FOUND_KW = /(創建|创建|始建|建於|建于|興建|兴建|創立|创立|建立|開基|開山|建造|草創|創設|落成|竣工|開創|創始|建てられ|建立され|創建され)/;
+function foundYear(text) {
+  const ok = (y) => y >= 400 && y <= 2100;
+  for (const s of splitSentences(text.slice(0, 3000))) {
+    if (!FOUND_KW.test(s)) continue;
+    const m = s.match(/(\d{3,4})\s*年/);
+    if (m && ok(+m[1])) return +m[1];
+  }
+  const ys = [...text.slice(0, 1200).matchAll(/(\d{3,4})\s*年/g)].map((m) => +m[1]).filter(ok);
+  return ys.length ? Math.min(...ys) : null;
+}
+
 async function whyVisit(place, persons) {
   const text = await fullText(place.lang, place.title).catch(() => '');
   const real = (s) => /[。！？!?]$/.test(s) || s.length > 40;
@@ -1877,10 +1890,7 @@ async function whyVisit(place, persons) {
   }
   const why = hits.slice(0, 2).map((s) => (s.length > 150 ? `${s.slice(0, 150)}…` : s)).join('');
   const who = persons.filter((p) => p.aliases.some((a) => text.includes(a))).map((p) => p.name);
-  // 創建年份：條目開頭第一個「XXX年」（三、四位數，排除「15年」這類年號年份）
-  const m = text.slice(0, 700).match(/(\d{3,4})\s*年/);
-  const year = m && +m[1] >= 400 && +m[1] <= 2100 ? +m[1] : null;
-  return { why, from, who, year };
+  return { why, from, who, year: foundYear(text) };
 }
 
 function personCenter() {
@@ -2094,7 +2104,13 @@ async function personSearch() {
       m.via.add(persons[i].name);
       merged.set(k, m);
     }));
-    let list = [...merged.values()].sort((a, b) => b.via.size - a.via.size || b.score - a.score || a.dist - b.dist).slice(0, persons.length > 1 ? 15 : 12);
+    const kanji = (t) => stripParen(t).replace(/浜/g, '濱').replace(/県/g, '縣').replace(/沢/g, '澤').replace(/竜/g, '龍').replace(/国/g, '國').replace(/広/g, '廣').replace(/駅/g, '站');
+    const uniq = [];
+    [...merged.values()].sort((a, b) => (a.lang === 'zh' ? 0 : 1) - (b.lang === 'zh' ? 0 : 1)).forEach((p) => {
+      const dup = uniq.find((u) => (distM(u.loc, p.loc) < 800 && nameMatch(kanji(u.show), kanji(p.show))) || distM(u.loc, p.loc) < 60);
+      if (dup) { dup.score += p.score; p.via.forEach((v) => dup.via.add(v)); } else uniq.push(p);
+    });
+    let list = uniq.sort((a, b) => b.via.size - a.via.size || b.score - a.score || a.dist - b.dist).slice(0, persons.length > 1 ? 15 : 12);
     if (!list.length) {
       box.innerHTML = `${head}<div class="empty">${km ? `${esc(center.name)}附近 ${km} 公里內` : ''}沒有找到跟${esc(who)}有關、而且有地點資料的地方。<br>可以把範圍調大，或選「不限範圍」看看。</div>`;
       drawPersonMarkers([]);
