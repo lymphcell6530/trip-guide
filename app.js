@@ -2321,7 +2321,10 @@ async function buildPdf(btn) {
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
       // 每一頁剛好是一張 A4 的高度，直接照高度切頁，不另外插分頁（避免空白頁）
       pagebreak: { mode: [] },
-    }).from(box);
+    }).from(box).toPdf().get('pdf').then((pdf) => {
+      // 高度差一點點會多出一張空白頁，刪掉
+      while (pdf.getNumberOfPages() > pages.length) pdf.deletePage(pdf.getNumberOfPages());
+    });
     if (btn.dataset.test) { S.pdfBlob = await worker.outputPdf('blob'); } else { await worker.save(); }
     hold.remove();
     btn.textContent = '✅ 已下載';
