@@ -1862,18 +1862,25 @@ async function fullText(lang, title) {
   const d = await wikiApi({ action: 'query', prop: 'extracts', explaintext: '1', titles: title, redirects: '1' }, lang);
   return Object.values(d.query?.pages || {})[0]?.extract || '';
 }
-async function whyVisit(place, aliases, personText) {
+async function whyVisit(place, persons) {
   const text = await fullText(place.lang, place.title).catch(() => '');
   const real = (s) => /[。！？!?]$/.test(s) || s.length > 40;
-  let hits = splitSentences(text).filter((s) => real(s) && aliases.some((a) => a && s.includes(a)));
+  const all = persons.flatMap((p) => p.aliases);
+  let hits = splitSentences(text).filter((s) => real(s) && all.some((a) => s.includes(a)));
   let from = 'place';
-  if (!hits.length && personText) {
-    const pn = stripParen(place.show);
-    hits = splitSentences(personText).filter((s) => real(s) && (s.includes(pn) || s.includes(stripParen(place.title))));
-    from = 'person';
+  if (!hits.length) {
+    const pn = stripParen(place.show), pt = stripParen(place.title);
+    for (const p of persons) {
+      const h = splitSentences(p.text || '').filter((s) => real(s) && (s.includes(pn) || s.includes(pt)));
+      if (h.length) { hits = h; from = p.name; break; }
+    }
   }
   const why = hits.slice(0, 2).map((s) => (s.length > 150 ? `${s.slice(0, 150)}…` : s)).join('');
-  return { why, from };
+  const who = persons.filter((p) => p.aliases.some((a) => text.includes(a))).map((p) => p.name);
+  // 創建年份：條目開頭第一個「XXX年」（三、四位數，排除「15年」這類年號年份）
+  const m = text.slice(0, 700).match(/(\d{3,4})\s*年/);
+  const year = m && +m[1] >= 400 && +m[1] <= 2100 ? +m[1] : null;
+  return { why, from, who, year };
 }
 
 function personCenter() {
@@ -1963,18 +1970,23 @@ async function renderPlan() {
     box.innerHTML = `<div class="detail"><h4>🗺️ 參訪路線</h4><div class="small">全部都刪掉了。</div>${restoreHtml(skipped)}</div>`;
     return;
   }
-  const order = visitOrder(center.loc, kept.slice(0, 9));
+  const byYear = S.planOrder === 'year';
+  const order = byYear ? yearOrder(center.loc, kept.slice(0, 9)) : visitOrder(center.loc, kept.slice(0, 9));
   S.personOrder = order.map((p, k) => ({ ...p, prev: k ? { name: order[k - 1].labelZh || order[k - 1].label, loc: order[k - 1].loc } : { name: center.name, loc: center.loc } }));
   const last = order[order.length - 1];
   const total = order.reduce((a, p) => a + p.hop, 0);
   const q = new URLSearchParams({ api: '1', origin: `${center.loc.lat},${center.loc.lng}`, destination: `${last.loc.lat},${last.loc.lng}`, travelmode: total > 4000 ? 'driving' : 'walking' });
   if (order.length > 1) q.set('waypoints', order.slice(0, -1).map((p) => `${p.loc.lat},${p.loc.lng}`).join('|'));
-  box.innerHTML = `<div class="detail"><h4>🗺️ 參訪路線（從${esc(center.name)}出發，照遠近排）</h4>
-    <div class="small">不想去的點按「✕ 不去」，會自動重新排順序。每站預留 ${STAY_MIN} 分鐘參觀。</div>
+  box.innerHTML = `<div class="detail"><h4>🗺️ 參訪路線（從${esc(center.name)}出發）</h4>
+    <div class="row" style="margin:4px 0 6px"><select id="planOrder">
+      <option value="near"${byYear ? '' : ' selected'}>照遠近排（最省時間）</option>
+      <option value="year"${byYear ? ' selected' : ''}>照年代排（把故事串起來）</option></select></div>
+    <div class="small">${byYear ? '照每個地方的創建／故事年代排，逛起來像在讀一段歷史。' : '照距離排，最順路。'}不想去的點按「✕ 不去」，會自動重新排。每站預留 ${STAY_MIN} 分鐘參觀。</div>
     <ol class="steps plan">${S.personOrder.map((p, k) => `<li>
       <div class="leg-line" id="legsum-${k}"><span class="small">🚏 從「${esc(p.prev.name)}」過去… 計算中</span></div>
-      <div class="plan-stop"><b>${k + 1}. ${esc(p.labelZh || p.label)}</b> <span class="small" id="eta-${k}"></span>
+      <div class="plan-stop"><b>${k + 1}. ${esc(p.labelZh || p.label)}</b>${p.year ? `<span class="yr">${p.year} 年</span>` : ''} <span class="small" id="eta-${k}"></span>
         <button type="button" class="chip skip-btn" data-skip="${esc(p.title)}">✕ 不去</button></div>
+      ${p.why ? `<div class="small plan-why">${esc(firstSentence(p.why))}</div>` : ''}
       <button type="button" class="chip" data-leg="${k}" style="margin-top:4px">這段的詳細搭法 ›</button>
       <div class="leg-box" id="leg-${k}"></div></li>`).join('')}</ol>
     <div id="planTotal" class="plan-total small">計算全程時間…</div>
@@ -1994,6 +2006,14 @@ async function renderPlan() {
   const all = (t - Date.now()) / 1000;
   $('#planTotal').innerHTML = `⏱ 交通共約 <b>${fmtDur(move)}</b>，加上參觀時間，全程約 <b>${fmtDur(all)}</b>（現在出發，約 ${hhmm(new Date(t))} 逛完）。<br>時間是估算的，實際出發時可以按「這段的詳細搭法」看最新班次。`;
 }
+
+// 照年代排：沒有年份的放最後，照距離
+function yearOrder(center, list) {
+  const sorted = [...list].sort((a, b) => (a.year ?? 1e9) - (b.year ?? 1e9) || distM(center, a.loc) - distM(center, b.loc));
+  let at = center;
+  return sorted.map((p) => { const hop = distM(at, p.loc); at = p.loc; return { ...p, hop }; });
+}
+const firstSentence = (t) => { const s = String(t).split(/(?<=[。！？!?])/)[0]; return s.length > 70 ? `${s.slice(0, 70)}…` : s; };
 
 function restoreHtml(skipped) {
   if (!skipped.length) return '';
@@ -2019,10 +2039,11 @@ async function personSearch() {
   const box = $('#personResults');
   if (!typed) return;
   S.personSkip = new Set();
+  S.legCache = new Map();
   $('#personQuery').blur();
   if ($('#personWhere').value === 'place') {
     const q = $('#personPlace').value.trim();
-    if (!q) { box.innerHTML = '<div class="empty">請輸入要以哪裡為中心，例如：台南、京都。</div>'; return; }
+    if (!q) { box.innerHTML = '<div class="empty">請輸入要以哪裡為中心，例如：台南、京都、奈良。</div>'; return; }
     box.innerHTML = '<div class="empty">搜尋地點…</div>';
     const hit = (await findPlaces(q).catch(() => []))[0];
     if (!hit) { box.innerHTML = '<div class="empty">找不到這個地點，換個說法試試看。</div>'; return; }
@@ -2036,51 +2057,77 @@ async function personSearch() {
     return;
   }
   const km = +$('#personKm').value;
-  box.innerHTML = `<div class="empty">正在找「${esc(typed)}」的資料…</div>`;
+  // 可以一次輸入好幾個人物，用「、」分開
+  const names = typed.split(/[、,，/／;；]+/).map((s) => s.trim()).filter(Boolean).slice(0, 4);
+  box.innerHTML = `<div class="empty">正在找「${esc(names.join('、'))}」的資料…</div>`;
   try {
-    const person = await resolvePerson(typed);
-    if (!person) { box.innerHTML = '<div class="empty">維基百科上找不到這個人物，換個寫法試試看（例如全名）。</div>'; return; }
+    const found = await Promise.all(names.map((n) => resolvePerson(n).catch(() => null)));
+    const persons = [];
+    for (let i = 0; i < names.length; i++) {
+      const person = found[i];
+      if (!person) continue;
+      let intro = person.intro;
+      if (person.lang !== 'zh') { const tr = await translateMany([intro], person.lang); if (tr) intro = tr[0]; }
+      const name = person.lang === 'zh' ? stripParen(person.show) : stripParen(person.title);
+      persons.push({
+        ...person, typed: names[i], name, introZh: intro,
+        aliases: [...new Set([names[i], name, stripParen(person.zh), stripParen(person.ja)].filter((a) => a && a.length >= 2))],
+      });
+    }
+    const missing = names.filter((n, i) => !found[i]);
+    if (!persons.length) { box.innerHTML = '<div class="empty">維基百科上找不到這些人物，換個寫法試試看（例如全名）。</div>'; return; }
+    const who = persons.map((p) => p.name).join('、');
+    const head = persons.map((p) => `<div class="card"><div class="card-head" style="cursor:default">
+        ${p.thumb ? `<img class="thumb" src="${esc(p.thumb)}" alt="">` : '<div class="thumb"></div>'}
+        <div class="card-body"><h3>👤 ${esc(p.name)}</h3><p class="desc">${esc(p.introZh.length > (persons.length > 1 ? 110 : 220) ? `${p.introZh.slice(0, persons.length > 1 ? 110 : 220)}…` : p.introZh)}</p>
+        <div class="actions"><button type="button" class="ghost-btn" data-deep="${esc(p.lang)}|${esc(p.title)}">📖 生平</button></div></div></div></div>`).join('')
+      + (missing.length ? `<div class="small" style="padding:4px">找不到：${esc(missing.join('、'))}（換個寫法試試看）</div>` : '');
+    box.innerHTML = `${head}<div class="empty">正在找${esc(center.name)}附近跟${esc(who)}有關的地方…</div>`;
     const country = guessCountry(center.loc) || S.country;
-    let intro = person.intro;
-    if (person.lang !== 'zh') { const tr = await translateMany([intro], person.lang); if (tr) intro = tr[0]; }
-    const pName = person.lang === 'zh' ? stripParen(person.show) : stripParen(person.title);
-    const head = `<div class="card"><div class="card-head" style="cursor:default">
-        ${person.thumb ? `<img class="thumb" src="${esc(person.thumb)}" alt="">` : '<div class="thumb"></div>'}
-        <div class="card-body"><h3>👤 ${esc(pName)}</h3><p class="desc">${esc(intro.length > 220 ? `${intro.slice(0, 220)}…` : intro)}</p>
-        <div class="actions"><button type="button" class="ghost-btn" data-deep="${esc(person.lang)}|${esc(person.title)}">📖 人物生平</button></div></div></div></div>`;
-    box.innerHTML = `${head}<div class="empty">正在找${esc(center.name)}附近跟${esc(pName)}有關的地方…</div>`;
-    let list = await personPlaces(person, typed, center.loc, km, country);
+    const lists = await Promise.all(persons.map((p) => personPlaces(p, p.typed, center.loc, km, country).catch(() => [])));
+    // 合併：同一個地方跟好幾個人有關，分數相加
+    const merged = new Map();
+    lists.forEach((list, i) => list.forEach((p) => {
+      const k = `${p.lang}:${p.title}`;
+      const m = merged.get(k) || { ...p, score: 0, via: new Set() };
+      m.score += p.score;
+      m.via.add(persons[i].name);
+      merged.set(k, m);
+    }));
+    let list = [...merged.values()].sort((a, b) => b.via.size - a.via.size || b.score - a.score || a.dist - b.dist).slice(0, persons.length > 1 ? 15 : 12);
     if (!list.length) {
-      box.innerHTML = `${head}<div class="empty">${km ? `${esc(center.name)}附近 ${km} 公里內` : ''}沒有找到跟${esc(pName)}有關、而且有地點資料的景點。<br>可以把範圍調大，或選「不限範圍」看看他的足跡都在哪裡。</div>`;
+      box.innerHTML = `${head}<div class="empty">${km ? `${esc(center.name)}附近 ${km} 公里內` : ''}沒有找到跟${esc(who)}有關、而且有地點資料的地方。<br>可以把範圍調大，或選「不限範圍」看看。</div>`;
       drawPersonMarkers([]);
       return;
     }
-    // 為什麼要去
-    const aliases = [...new Set([typed, pName, stripParen(person.zh), stripParen(person.ja)].filter((a) => a && a.length >= 2))];
-    const personText = await fullText(person.lang, person.title).catch(() => '');
-    const whys = await Promise.all(list.map((p) => whyVisit(p, aliases, personText)));
-    list = list.map((p, k) => ({ ...p, ...whys[k], label: stripParen(p.show) }));
+    await Promise.all(persons.map(async (p) => { p.text = await fullText(p.lang, p.title).catch(() => ''); }));
+    const whys = await Promise.all(list.map((p) => whyVisit(p, persons)));
+    list = list.map((p, k) => {
+      const w = whys[k];
+      const rel = [...new Set([...w.who, ...p.via])];
+      return { ...p, ...w, who: rel, label: stripParen(p.show) };
+    });
     // 日文的地名、故事翻成中文
     const ja = list.filter((p) => p.lang !== 'zh');
     if (ja.length) {
       const tr = await translateMany(ja.flatMap((p) => [p.label, p.why || '']), 'ja');
       if (tr) ja.forEach((p, k) => { p.labelZh = tr[k * 2]; if (p.why && tr[k * 2 + 1]) { p.why = tr[k * 2 + 1]; p.translated = true; } });
     }
-    // 有故事的排前面
-    list.sort((a, b) => (b.why ? 1 : 0) - (a.why ? 1 : 0) || b.score - a.score || a.dist - b.dist);
+    list.sort((a, b) => (b.why ? 1 : 0) - (a.why ? 1 : 0) || b.who.length - a.who.length || b.score - a.score || a.dist - b.dist);
     S.personList = list;
     S.personCenterNow = center;
     drawPersonMarkers(list);
     box.innerHTML = `${head}
-      <div class="small" style="padding:8px 4px">${km ? `在「${esc(center.name)}」附近 ${km} 公里內，` : ''}找到 ${list.length} 個跟 <b>${esc(pName)}</b> 有關的地方（地圖上紫色數字）。</div>
+      <div class="small" style="padding:8px 4px">${km ? `在「${esc(center.name)}」附近 ${km} 公里內，` : ''}找到 ${list.length} 個跟 <b>${esc(who)}</b> 有關的地方（地圖上紫色數字）。</div>
       ${list.map((p, k) => `<article class="card" id="pp-${k}"><div class="card-head" style="cursor:default">
           ${p.thumb ? `<img class="thumb" src="${esc(p.thumb)}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
           <div class="card-body"><h3>${k + 1}. ${esc(p.labelZh && p.labelZh !== p.label ? `${p.labelZh}（${p.label}）` : p.label)}</h3>
-            <div class="meta"><span>📏 ${fmtDist(p.dist)}</span>${p.dist < 3000 ? `<span>🚶 約 ${walkGuess(p.dist)}</span>` : ''}${p.desc && p.lang === 'zh' ? `<span class="tag">${esc(p.desc)}</span>` : ''}</div>
+            <div class="meta"><span>📏 ${fmtDist(p.dist)}</span>${p.dist < 3000 ? `<span>🚶 約 ${walkGuess(p.dist)}</span>` : ''}${p.year ? `<span>🏛 約 ${p.year} 年</span>` : ''}${p.desc && p.lang === 'zh' ? `<span class="tag">${esc(p.desc)}</span>` : ''}</div>
+            ${persons.length > 1 ? `<div class="meta" style="margin-top:4px"><span>👤 相關：${esc(p.who.join('、'))}</span></div>` : ''}
           </div></div>
           <div class="detail"><h4>🔎 為什麼要去</h4>
-            <div class="story">${p.why ? esc(p.why) : '條目裡沒有直接寫到他，但這裡跟他有關聯。按「深入閱讀」看看完整介紹。'}</div>
-            ${p.why && p.from === 'person' ? `<div class="small">（摘自${esc(pName)}的生平條目）</div>` : ''}${p.lang !== 'zh' && p.why ? `<div class="small">（日文維基百科${p.translated ? '，Google 自動翻譯' : '；在 Google Cloud 啟用 Cloud Translation API 後會自動翻成中文'}）</div>` : ''}
+            <div class="story">${p.why ? esc(p.why) : '條目裡沒有直接寫到，但這裡跟他有關聯。按「深入閱讀」看看完整介紹。'}</div>
+            ${p.why && p.from !== 'place' ? `<div class="small">（摘自${esc(p.from)}的生平條目）</div>` : ''}${p.lang !== 'zh' && p.why ? `<div class="small">（日文維基百科${p.translated ? '，Google 自動翻譯' : '；在 Google Cloud 啟用 Cloud Translation API 後會自動翻成中文'}）</div>` : ''}
             <div class="actions">
               <button type="button" class="go-btn" data-pgo="${k}">帶我去 ➜</button>
               <button type="button" class="ghost-btn" data-deep="${esc(p.lang)}|${esc(p.title)}">📖 深入閱讀</button>
@@ -2088,7 +2135,7 @@ async function personSearch() {
               <button type="button" class="ghost-btn" data-skip="${esc(p.title)}">✕ 不去</button>
             </div></div></article>`).join('')}
       ${itineraryHtml()}
-      <div class="small" style="padding:8px 4px">資料來源：維基百科。故事是從條目裡「提到這個人」的句子整理出來的，想看完整內容可以按「深入閱讀」。</div>`;
+      <div class="small" style="padding:8px 4px">資料來源：維基百科。故事是從條目裡「提到這些人物」的句子整理出來的；年份取自條目開頭，僅供參考。</div>`;
     renderPlan();
   } catch (e) {
     console.warn(e);
@@ -2097,8 +2144,10 @@ async function personSearch() {
 }
 
 $('#personForm')?.addEventListener('submit', (e) => { e.preventDefault(); personSearch(); });
+$('#person-view')?.addEventListener('change', (e) => { if (e.target.id === 'planOrder') { S.planOrder = e.target.value; renderPlan(); } });
 $('#personWhere')?.addEventListener('change', () => $('#personPlace').classList.toggle('hidden', $('#personWhere').value !== 'place'));
 $('#person-view')?.addEventListener('click', (e) => {
+  if (e.target.id === 'planOrder') return;
   const sk = e.target.closest('[data-skip],[data-unskip]');
   if (sk) { toggleSkip(sk.dataset.skip || sk.dataset.unskip); return; }
   const leg = e.target.closest('[data-leg]');
