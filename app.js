@@ -1644,7 +1644,7 @@ async function wikiSection(title, lang, index) {
   const d = await wikiApi({ action: 'parse', page: title, prop: 'text', section: String(index), redirects: '1', disableeditsection: '1', disabletoc: '1' }, lang);
   const html = d.parse?.text?.['*'] || '';
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  doc.querySelectorAll('sup, style, table, .mw-editsection, .reference, .navbox, .hatnote, .thumb, figure, .mw-empty-elt, .noprint, .infobox, h2, h3, h4').forEach((e) => e.remove());
+  doc.querySelectorAll('sup, style, table, .mw-editsection, .reference, .references, .reflist, .navbox, .hatnote, .thumb, figure, .mw-empty-elt, .noprint, .infobox, .gallery, h2, h3, h4').forEach((e) => e.remove());
   const links = [];
   doc.querySelectorAll('a[href]').forEach((a) => {
     const m = a.getAttribute('href').match(/^\/(?:wiki|zh-[a-z]+)\/([^#?]+)/);
@@ -1652,7 +1652,7 @@ async function wikiSection(title, lang, index) {
     const t = decodeURIComponent(m[1]).replace(/_/g, ' ');
     if (!t.includes(':') && !links.includes(t) && t !== title) links.push(t);
   });
-  const text = [...doc.querySelectorAll('p, li, dd')].map((p) => p.textContent.replace(/\s+/g, ' ').trim()).filter((t) => t.length > 1).join('\n');
+  const text = [...doc.querySelectorAll('p, li, dd')].map((p) => p.textContent.replace(/\s+/g, ' ').trim()).filter((t) => t.length > 1 && !/^[\^↑]/.test(t)).join('\n');
   return { text, links: links.slice(0, 24) };
 }
 
