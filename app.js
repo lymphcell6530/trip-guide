@@ -2319,7 +2319,8 @@ async function buildPdf(btn) {
       image: { type: 'jpeg', quality: 0.9 },
       html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', width: 794, windowWidth: 794, scrollX: 0, scrollY: 0, x: 0 },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-      pagebreak: { mode: ['css'], after: '.pdf-page' },
+      // 每一頁剛好是一張 A4 的高度，直接照高度切頁，不另外插分頁（避免空白頁）
+      pagebreak: { mode: [] },
     }).from(box);
     if (btn.dataset.test) { S.pdfBlob = await worker.outputPdf('blob'); } else { await worker.save(); }
     hold.remove();

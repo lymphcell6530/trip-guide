@@ -193,7 +193,7 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 /* PDF 版面（A4，794×1123 px） */
 .pdf-hold { position: fixed; left: -10000px; top: 0; width: 794px; }
 .pdf-root { width: 794px; }
-.pdf-page { position: relative; width: 794px; height: 1122px; overflow: hidden; background: #fff; color: #1c2321; font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif; page-break-after: always; }
+.pdf-page { position: relative; width: 794px; height: 1123px; overflow: hidden; background: #fff; color: #1c2321; font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif; }
 .pdf-bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .13; }
 .pdf-inner { position: relative; padding: 56px 64px 40px; }
 .pdf-foot { position: absolute; left: 64px; right: 64px; bottom: 26px; font-size: 11px; color: #6b7a76; border-top: 1px solid #d9e0dd; padding-top: 8px; }
