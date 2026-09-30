@@ -1776,6 +1776,8 @@ document.addEventListener('click', (e) => {
 // ---------- 👤 人物：找跟歷史人物有關、可以參觀的地方，並說明為什麼要去 ----------
 const SHIN = { 樣: '様', 禪: '禅', 佛: '仏', 廣: '広', 國: '国', 龍: '竜', 寶: '宝', 藝: '芸', 圖: '図', 會: '会', 舊: '旧', 聖: '聖', 傳: '伝', 屬: '属', 關: '関', 靜: '静', 燈: '灯', 齋: '斎', 條: '条', 臺: '台', 澤: '沢', 濱: '浜', 縣: '県', 醫: '医', 學: '学', 體: '体', 樓: '楼', 權: '権', 戰: '戦', 驛: '駅', 將: '将', 軍: '軍', 殿: '殿', 門: '門', 樂: '楽', 豐: '豊', 繪: '絵', 様: '様' };
 const toShinjitai = (t) => String(t || '').replace(/./g, (c) => SHIN[c] || c);
+// 「巴洛克建築」→「巴洛克」：條目裡常寫成「巴洛克式、巴洛克風格」，用核心詞查比較完整
+const coreTerm = (t) => String(t || '').replace(/(建築|建筑|風格|风格|樣式|样式|様式)$/, '') || t;
 const stripParen = (t) => String(t || '').replace(/\s*[（(].*?[)）]\s*$/, '');
 const SKIP_PLACE = /(爭議|争議|事件|選舉|選区|選區|列表|一覧|年表|電視台|电视台|放送|テレビ|ラジオ|新聞|株式会社|有限公司|球場|スタジアム|世界遺產|世界遺産|古跡$|古蹟$|構成資産|地區的|地域の)/;
 
@@ -1832,7 +1834,7 @@ async function personPlaces(person, typed, center, km, country) {
     score.set(k, (score.get(k) || 0) + w - i * 0.02);
   });
   const langs = [];
-  if (person.zh) langs.push(['zh', person.zh, typed]);
+  if (person.zh) langs.push(['zh', person.zh, coreTerm(typed)]);
   const jaTerm = person.ja || (country === 'JP' ? toShinjitai(typed) : null);
   if (jaTerm && (country === 'JP' || !person.zh || !km)) langs.push(['ja', person.ja || jaTerm, stripParen(person.ja ? person.ja : jaTerm)]);
   if (country === 'JP' && person.ja && toShinjitai(typed) !== stripParen(person.ja)) langs.push(['ja', toShinjitai(typed), toShinjitai(typed)]);
@@ -2089,7 +2091,7 @@ async function personSearch() {
       const name = nameMatch(found0, names[i]) || nameMatch(toShinjitai(found0), toShinjitai(names[i])) ? found0 : names[i];
       persons.push({
         ...person, typed: names[i], name, introZh: intro,
-        aliases: [...new Set([names[i], toShinjitai(names[i]), name, stripParen(person.zh), stripParen(person.ja)].filter((a) => a && a.length >= 2))],
+        aliases: [...new Set([names[i], coreTerm(names[i]), toShinjitai(coreTerm(names[i])), toShinjitai(names[i]), name, stripParen(person.zh), stripParen(person.ja)].filter((a) => a && a.length >= 2))],
       });
     }
     const missing = names.filter((n, i) => !found[i]);
