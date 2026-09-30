@@ -872,11 +872,19 @@ function groupOptions(raw) {
 const NT_HOST = 'navitime-route-totalnavi.p.rapidapi.com';
 const NT_MOVE = {
   local_train: ['🚃', '普通車'], rapid_train: ['🚃', '快速'], semiexpress_train: ['🚃', '準急'], express_train: ['🚆', '急行'],
-  limited_express_train: ['🚆', '特急'], liner: ['🚆', '特急'], superexpress_train: ['🚄', '新幹線'], sleeper_ultraexpress: ['🚆', '寢台特急'],
+  limited_express_train: ['🚆', '特急'], ultraexpress_train: ['🚆', '特急'], liner: ['🚆', '特急'], superexpress_train: ['🚄', '新幹線'], sleeper_ultraexpress: ['🚆', '寢台特急'],
   bus: ['🚌', '公車'], highway_bus: ['🚌', '高速巴士'], midnight_bus: ['🚌', '深夜巴士'], domestic_flight: ['✈️', '國內線班機'],
   ferry: ['⛴️', '渡輪'], car: ['🚗', '汽車'], cycle: ['🚲', '自行車'],
 };
-const yen = (f) => (f?.unit_0 ? `¥${f.unit_0}${f.unit_48 && f.unit_48 !== f.unit_0 ? `（IC 卡 ¥${f.unit_48}）` : ''}` : null);
+// 票價：unit_0 車票、unit_48 IC 卡；unit_1 自由席／unit_2 指定席特急券（另外加）；unit_128 以後是定期票，不顯示
+function yen(f) {
+  if (!f?.unit_0) return null;
+  let t = `¥${f.unit_0}`;
+  if (f.unit_48 && f.unit_48 !== f.unit_0) t += `（IC 卡 ¥${f.unit_48}）`;
+  const extra = [f.unit_1 && `自由席 ¥${f.unit_1}`, f.unit_2 && `指定席 ¥${f.unit_2}`].filter(Boolean);
+  if (extra.length) t += `＋特急券 ${extra.join('／')}`;
+  return t;
+}
 
 async function japanOptions(from, dest) {
   // NAVITIME 一定要出發時間，用日本時間（UTC+9）
