@@ -919,10 +919,12 @@ async function japanOptions(from, dest) {
     });
     const m = it.summary?.move || {};
     const transits = segs.filter((g) => g.type === 'transit');
-    const leaveBy = m.from_time ? new Date(m.from_time) : null;
+    // 最晚出門時間＝第一班車發車時間－走到車站的時間（NAVITIME 的 from_time 是查詢當下，含等車時間）
+    const walkBefore = segs[0]?.type === 'walk' ? segs[0].sec : 0;
+    const leaveBy = transits[0]?.dep ? new Date(transits[0].dep.getTime() - walkBefore * 1000) : (m.from_time ? new Date(m.from_time) : null);
     const arrive = m.to_time ? new Date(m.to_time) : new Date(Date.now() + (m.time || 0) * 60000);
     return {
-      sec: (m.time || 0) * 60, arrive, leaveBy,
+      sec: leaveBy ? Math.round((arrive - leaveBy) / 1000) : (m.time || 0) * 60, arrive, leaveBy,
       // 最上面顯示「全程總價」（含特急券），細節放在每一段
       fare: m.reference_fare?.lowest_total_ticket
         ? `合計 ¥${m.reference_fare.lowest_total_ticket}${m.reference_fare.lowest_total_ic && m.reference_fare.lowest_total_ic !== m.reference_fare.lowest_total_ticket ? `（IC 卡 ¥${m.reference_fare.lowest_total_ic}）` : ''}`
