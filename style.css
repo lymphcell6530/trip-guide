@@ -62,6 +62,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .status {font-size: 13px; color: var(--muted); padding: 6px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
 
 .layout { flex: 1; display: grid; grid-template-rows: 34dvh 1fr; min-height: 0; }
+/* 手機：所有內容都貼齊螢幕寬度，不被長文字撐寬 */
+.layout { grid-template-columns: minmax(0, 1fr); }
+.panel, .list, .row, .go-form, .card, .card-body, .detail { min-width: 0; }
+.row > select, .row > input, .go-form select { min-width: 0; flex: 1 1 0; width: 100%; text-overflow: ellipsis; }
+.tabs { overflow: hidden; }
+.tab { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.story, .desc, .leg-line, .steps li, .small { overflow-wrap: anywhere; }
 body.list-full .layout { grid-template-rows: 0 1fr; }
 body.list-full .map-wrap { visibility: hidden; }
 .map-toggle { position: absolute; top: 8px; right: 8px; z-index: 5; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,.25); }
@@ -69,7 +76,7 @@ body.list-full .map-wrap { visibility: hidden; }
 body.list-full .show-map { display: block; }
 @media (min-width: 900px) { .map-toggle, .show-map { display: none !important; } body.list-full .layout { grid-template-columns: 1fr 440px; } body.list-full .map-wrap { visibility: visible; } }
 @media (min-width: 900px) {
-  .layout { grid-template-rows: none; grid-template-columns: 1fr 440px; }
+  .layout { grid-template-rows: none; grid-template-columns: minmax(0, 1fr) 440px; }
 }
 .map-wrap { position: relative; min-height: 0; }
 #map { position: absolute; inset: 0; background: var(--line); }
