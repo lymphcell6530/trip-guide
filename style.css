@@ -145,5 +145,8 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .tdx:empty { display: none; }
 .live { color: #16a34a; }
 .live.soon { color: #dc2626; }
+.abroad h4 { margin-top: 16px; }
+.abroad select, .abroad input[type=date] { width: 100%; font: inherit; }
+.abroad #abLeg1, .abroad #abLeg3 { margin-top: 6px; }
 .best { display: inline-block; font-size: 11px; font-weight: 700; background: var(--accent); color: var(--on-accent); border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }
 .tab { font-size: 14px; }

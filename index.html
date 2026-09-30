@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=14">
+  <link rel="stylesheet" href="style.css?v=20">
 </head>
 <body>
   <header class="topbar">
@@ -97,6 +97,10 @@
         <input id="tdxSecret" type="text" placeholder="Client Secret" autocomplete="off" spellcheck="false">
       </label>
       <p class="small">到 <a href="https://tdx.transportdata.tw/register" target="_blank" rel="noopener">TDX 運輸資料流通服務</a> 免費註冊，登入後在「會員中心 → 資料服務 → API 金鑰」可以看到 Client Id 和 Client Secret。</p>
+      <label>NAVITIME 金鑰（日本電車／公車：搭哪條線、幾點發車、票價）
+        <input id="rapidKey" type="text" placeholder="X-RapidAPI-Key" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="small">到 <a href="https://rapidapi.com/navitimejapan-navitimejapan/api/navitime-route-totalnavi" target="_blank" rel="noopener">RapidAPI 的 NAVITIME Route(totalnavi)</a> 註冊並訂閱方案後，在頁面上的「X-RapidAPI-Key」就是這把金鑰。</p>
       <label>自動搜尋：移動多遠後、停留多久才算「到新定點」
         <div class="row">
           <select id="moveThreshold">
@@ -119,6 +123,6 @@
     </form>
   </dialog>
 
-  <script src="app.js?v=19"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>

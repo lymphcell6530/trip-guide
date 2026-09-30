@@ -9,6 +9,7 @@ const S = {
   notify: load('notify', '0') === '1',
   tdxId: load('tdxId', ''),
   tdxSecret: load('tdxSecret', ''),
+  rapidKey: load('rapidKey', ''),
   auto: load('auto', '1') === '1',
   gps: null,            // 最新 GPS 位置 {lat,lng}
   origin: null,         // 目前用來搜尋與導航的位置
@@ -712,9 +713,9 @@ function paintGoFrom() {
   paintRecent();
 }
 
-async function transitOptions(dest) {
+async function transitOptions(dest, from = { loc: S.origin }) {
   const body = {
-    origin: { location: { latLng: { latitude: S.origin.lat, longitude: S.origin.lng } } },
+    origin: { location: { latLng: { latitude: from.loc.lat, longitude: from.loc.lng } } },
     destination: dest.placeId ? { placeId: dest.placeId } : { location: { latLng: { latitude: dest.loc.lat, longitude: dest.loc.lng } } },
     travelMode: 'TRANSIT',
     computeAlternativeRoutes: true,
@@ -816,7 +817,7 @@ function lineChip(g) {
   return `<span class="transit-line" style="background:${esc(g.color)};color:${esc(g.textColor)}">${g.icon} ${esc(g.line || g.vehicle)}</span>`;
 }
 
-function optionCard(o, i, dest) {
+function optionCard(o, i, dest, from = { loc: S.origin }, country = S.country) {
   const legs = o.segs.map((g) => (g.type === 'walk'
     ? `<span class="walk">🚶${Math.max(1, Math.round(g.sec / 60))}分</span>`
     : lineChip(g))).join('<span class="arrow">›</span>');
@@ -827,13 +828,13 @@ function optionCard(o, i, dest) {
         在「${esc(f.from)}」上車${f.dep ? `，<b>${hhmm(f.dep)}</b> 發車 <span class="count${cd.soon ? ' soon' : ''}" data-dep="${f.dep.getTime()}">${cd.text}</span>` : ''}
         ${o.leaveBy ? `<br>👉 最晚 <b>${hhmm(o.leaveBy)}</b> 要出發走去車站` : ''}
         ${o.later?.length ? `<br>⏭ 下一班：${o.later.slice(0, 4).map(hhmm).join('、')}` : ''}
-        ${S.country === 'TW' ? `<div class="tdx" data-tdx="${i}-${o.segs.indexOf(f)}"></div>` : ''}</div>`
+        ${country === 'TW' ? `<div class="tdx" data-tdx="${i}-${o.segs.indexOf(f)}"></div>` : ''}</div>`
     : '<div class="next-bus">這段路走路就到了，不用搭車。</div>';
   const steps = o.segs.map((g, j) => (g.type === 'walk'
     ? `<li>🚶 走路 ${fmtDur(g.sec)}（${fmtDist(g.m)}）</li>`
     : `<li>${lineChip(g)} ${esc(g.from)} → ${esc(g.to)}${g.headsign ? `（往 ${esc(g.headsign)}）` : ''}
-        <div class="sd">${g.dep ? `${hhmm(g.dep)} 發車 · ` : ''}${g.arr ? `${hhmm(g.arr)} 到站 · ` : ''}${g.stops ? `坐 ${g.stops} 站 · ` : ''}${fmtDur(g.sec)}${g.agency ? ` · ${esc(g.agency)}` : ''}</div>${S.country === 'TW' ? `<div class="tdx sd" data-tdx="${i}-${j}"></div>` : ''}</li>`)).join('');
-  const q = new URLSearchParams({ api: '1', origin: `${S.origin.lat},${S.origin.lng}`, destination: dest.name, travelmode: 'transit' });
+        <div class="sd">${g.dep ? `${hhmm(g.dep)} 發車 · ` : ''}${g.arr ? `${hhmm(g.arr)} 到站 · ` : ''}${g.stops ? `坐 ${g.stops} 站 · ` : ''}${fmtDur(g.sec)}${g.agency ? ` · ${esc(g.agency)}` : ''}${g.fare ? ` · 💰 ${esc(g.fare)}` : ''}</div>${country === 'TW' ? `<div class="tdx sd" data-tdx="${i}-${j}"></div>` : ''}</li>`)).join('');
+  const q = new URLSearchParams({ api: '1', origin: `${from.loc.lat},${from.loc.lng}`, destination: `${dest.loc.lat},${dest.loc.lng}`, travelmode: 'transit' });
   return `<article class="card"><div class="opt-head" data-opt="${i}">
       <div class="opt-top"><span class="dur">${fmtDur(o.sec)}${i === 0 ? '<span class="best">推薦</span>' : ''}</span>
         <span class="fare">${o.fare ? `💰 ${esc(o.fare)}` : '<span class="small">車資：Google 沒有資料</span>'}</span></div>
@@ -848,64 +849,220 @@ function optionCard(o, i, dest) {
   </article>`;
 }
 
-async function planTrip(dest) {
-  const box = $('#goResults');
-  $('#goQuery').value = dest.name;
-  if (!S.origin) { box.innerHTML = '<div class="empty">還沒拿到你的位置，請稍等一下或按 📍。</div>'; return; }
+// 同一路線不同班次合併、依抵達時間排序（Google 與 NAVITIME 共用）
+function groupOptions(raw) {
+  const mode = $('#goModes').value;
+  const isBus = (t) => /BUS/.test(t);
+  const groups = new Map();
+  for (const o of raw) {
+    const types = o.segs.filter((g) => g.type === 'transit').map((g) => g.vtype);
+    if (mode === 'BUS' && types.some((t) => !isBus(t))) continue;
+    if (mode === 'RAIL' && types.some(isBus)) continue;
+    if (o.leaveBy && o.leaveBy.getTime() < Date.now() - 60000) continue; // 已經來不及的班次
+    if (!groups.has(o.key)) groups.set(o.key, []);
+    groups.get(o.key).push(o);
+  }
+  return [...groups.values()].map((list) => {
+    list.sort((a, b) => (a.first?.dep || 0) - (b.first?.dep || 0));
+    return { ...list[0], later: list.slice(1).map((o) => o.first?.dep).filter(Boolean) };
+  }).sort((a, b) => a.arrive - b.arrive);
+}
+
+// ---------- 日本交通：NAVITIME（搭哪條線、幾點發車、票價） ----------
+const NT_HOST = 'navitime-route-totalnavi.p.rapidapi.com';
+const NT_MOVE = {
+  local_train: ['🚃', '普通車'], rapid_train: ['🚃', '快速'], semiexpress_train: ['🚃', '準急'], express_train: ['🚆', '急行'],
+  limited_express_train: ['🚆', '特急'], liner: ['🚆', '特急'], superexpress_train: ['🚄', '新幹線'], sleeper_ultraexpress: ['🚆', '寢台特急'],
+  bus: ['🚌', '公車'], highway_bus: ['🚌', '高速巴士'], midnight_bus: ['🚌', '深夜巴士'], domestic_flight: ['✈️', '國內線班機'],
+  ferry: ['⛴️', '渡輪'], car: ['🚗', '汽車'], cycle: ['🚲', '自行車'],
+};
+const yen = (f) => (f?.unit_0 ? `¥${f.unit_0}${f.unit_48 && f.unit_48 !== f.unit_0 ? `（IC 卡 ¥${f.unit_48}）` : ''}` : null);
+
+async function japanOptions(from, dest) {
+  const q = new URLSearchParams({ start: `${from.loc.lat},${from.loc.lng}`, goal: `${dest.loc.lat},${dest.loc.lng}`, limit: '5' });
+  const r = await fetch(`https://${NT_HOST}/route_transit?${q}`, { headers: { 'x-rapidapi-key': S.rapidKey, 'x-rapidapi-host': NT_HOST } });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.message || `NAVITIME ${r.status}`);
+  return (d.items || []).map((it) => {
+    const secs = it.sections || [];
+    const segs = [], path = [];
+    const pname = (p) => (p?.name === 'start' ? from.name : p?.name === 'goal' ? dest.name : p?.name) || '';
+    secs.forEach((s, k) => {
+      if (s.type === 'point') { if (s.coord) path.push({ lat: s.coord.lat, lng: s.coord.lon }); return; }
+      if (s.move === 'walk') {
+        const last = segs[segs.length - 1];
+        if (last?.type === 'walk') { last.sec += (s.time || 0) * 60; last.m += s.distance || 0; }
+        else segs.push({ type: 'walk', sec: (s.time || 0) * 60, m: s.distance || 0 });
+        return;
+      }
+      const [icon, label] = NT_MOVE[s.move] || ['🚆', '電車'];
+      const t = s.transport || {};
+      const color = t.color ? (String(t.color).startsWith('#') ? t.color : `#${t.color}`) : '#0f766e';
+      segs.push({
+        type: 'transit', vtype: /bus/.test(s.move) ? 'BUS' : 'RAIL', icon,
+        vehicle: t.type || label, line: s.line_name || t.name || label, lineName: t.name || s.line_name || '',
+        color, textColor: '#ffffff', agency: t.company?.name || '',
+        from: pname(secs[k - 1]), to: pname(secs[k + 1]),
+        dep: s.from_time ? new Date(s.from_time) : null, arr: s.to_time ? new Date(s.to_time) : null,
+        headsign: t.links?.[0]?.destination?.name || '', stops: null, sec: (s.time || 0) * 60, fare: yen(t.fare),
+      });
+    });
+    const m = it.summary?.move || {};
+    const transits = segs.filter((g) => g.type === 'transit');
+    const leaveBy = m.from_time ? new Date(m.from_time) : null;
+    const arrive = m.to_time ? new Date(m.to_time) : new Date(Date.now() + (m.time || 0) * 60000);
+    return {
+      sec: (m.time || 0) * 60, arrive, leaveBy, fare: yen(m.fare),
+      transfers: m.transit_count ?? Math.max(0, transits.length - 1),
+      walkSec: segs.filter((g) => g.type === 'walk').reduce((a, g) => a + g.sec, 0),
+      segs, first: transits[0], path,
+      key: transits.map((g) => `${g.line}@${g.from}>${g.to}`).join('|') || 'walk',
+    };
+  });
+}
+
+function mapsLink(from, dest) {
+  const q = new URLSearchParams({ api: '1', origin: `${from.loc.lat},${from.loc.lng}`, destination: `${dest.loc.lat},${dest.loc.lng}`, travelmode: 'transit' });
+  return `https://www.google.com/maps/dir/?${q}`;
+}
+
+// 查交通：dest 目的地；opt.from 出發地（預設目前位置）、opt.box 要顯示在哪裡（跨國行程的每一段）
+async function planTrip(dest, opt = {}) {
+  const box = opt.box || $('#goResults');
+  const top = !opt.box;
+  const from = opt.from || { name: S.manual ? ($('#placeQuery')?.value || '你選的位置') : '你目前的位置', loc: S.origin };
+  if (top) $('#goQuery').value = dest.name;
+  if (!from.loc) { box.innerHTML = '<div class="empty">還沒拿到你的位置，請稍等一下或按 📍。</div>'; return; }
   if (!S.map) { box.innerHTML = '<div class="empty">要先在 ⚙️ 設定 Google Maps 金鑰，才能查交通。</div>'; return; }
-  saveRecent({ name: dest.name, loc: dest.loc });
+  const cFrom = guessCountry(from.loc) || S.country;
+  const cTo = guessCountry(dest.loc) || cFrom;
+  if (top) {
+    saveRecent({ name: dest.name, loc: dest.loc });
+    S.goDest = dest;
+    // 台灣 ⇄ 日本：要搭飛機，分三段查
+    if (cFrom && cTo && cFrom !== cTo && AIRPORTS[cFrom] && AIRPORTS[cTo]) { planAbroad(from, dest, cFrom, cTo); return; }
+  }
   box.innerHTML = '<div class="empty">正在查詢班次…</div>';
   try {
-    const raw = await transitOptions(dest);
-    const mode = $('#goModes').value;
-    const isBus = (t) => /BUS/.test(t);
-    const groups = new Map();
-    for (const o of raw) {
-      const types = o.segs.filter((g) => g.type === 'transit').map((g) => g.vtype);
-      if (mode === 'BUS' && types.some((t) => !isBus(t))) continue;
-      if (mode === 'RAIL' && types.some(isBus)) continue;
-      if (o.leaveBy && o.leaveBy.getTime() < Date.now() - 60000) continue; // 已經來不及的班次
-      if (!groups.has(o.key)) groups.set(o.key, []);
-      groups.get(o.key).push(o);
-    }
-    const opts = [...groups.values()].map((list) => {
-      list.sort((a, b) => (a.first?.dep || 0) - (b.first?.dep || 0));
-      return { ...list[0], later: list.slice(1).map((o) => o.first?.dep).filter(Boolean) };
-    }).sort((a, b) => a.arrive - b.arrive);
-    S.goDest = dest; S.goOpts = opts;
-    if (!opts.length && mode) {
-      box.innerHTML = '<div class="empty">找不到符合「' + esc($('#goModes').selectedOptions[0].text) + '」的路線，改成「公車、捷運、火車都可以」試試看。</div>';
-      return;
+    let opts, source;
+    if (cFrom === 'JP') {
+      if (!S.rapidKey) {
+        box.innerHTML = `<div class="card"><div class="detail"><h4>前往「${esc(dest.name)}」</h4>
+          <div>日本的電車／公車要用 <b>NAVITIME</b> 查。到 ⚙️ 設定填入 NAVITIME 金鑰後，這裡就會直接顯示搭哪條線、幾點發車、票價多少。</div>
+          <div class="actions"><a class="go-btn" style="text-decoration:none" href="${esc(mapsLink(from, dest))}" target="_blank" rel="noopener">先用 Google 地圖查 ➜</a></div></div></div>`;
+        return;
+      }
+      opts = groupOptions(await japanOptions(from, dest));
+      source = '班次與票價來自 NAVITIME（日本），實際以車站公告為準。';
+    } else {
+      opts = groupOptions(await transitOptions(dest, from));
+      source = '班次時間來自 Google 時刻表，實際以站牌／車站公告為準。';
     }
     if (!opts.length) {
-      // 日本等地區：Google 不把大眾運輸資料開放給外部 App，改用 Google 地圖 App 查
-      const q = new URLSearchParams({ api: '1', origin: `${S.origin.lat},${S.origin.lng}`, destination: dest.name, travelmode: 'transit' });
-      const gm = `https://www.google.com/maps/dir/?${q}`;
-      const why = S.country === 'JP'
-        ? 'Google 沒有把日本的電車／公車時刻開放給其他 App 使用，所以這裡查不到。<br>按下面的按鈕，會用 <b>Google 地圖 App</b> 直接幫你查：搭哪條線、幾點發車、票價多少。'
-        : '這裡查不到大眾運輸路線（可能太近、這個時間沒車，或這個地區沒有 Google 的大眾運輸資料）。<br>可以用 Google 地圖 App 再確認一次。';
-      box.innerHTML = `<div class="card"><div class="detail"><h4>前往「${esc(dest.name)}」</h4><div>${why}</div>
-        <div class="actions"><a class="go-btn" style="text-decoration:none" href="${esc(gm)}" target="_blank" rel="noopener">用 Google 地圖查電車・公車 ➜</a></div></div></div>`;
+      const mode = $('#goModes').value;
+      box.innerHTML = mode
+        ? `<div class="empty">找不到符合「${esc($('#goModes').selectedOptions[0].text)}」的路線，改成「公車、捷運、火車都可以」試試看。</div>`
+        : `<div class="card"><div class="detail"><h4>前往「${esc(dest.name)}」</h4><div>這裡查不到大眾運輸路線（可能太近、這個時間沒車，或這個地區沒有資料）。</div>
+          <div class="actions"><a class="go-btn" style="text-decoration:none" href="${esc(mapsLink(from, dest))}" target="_blank" rel="noopener">用 Google 地圖再查一次 ➜</a></div></div></div>`;
       return;
     }
-    box.innerHTML = `<div class="small" style="padding:8px 4px">前往「${esc(dest.name)}」，找到 ${opts.length} 種搭法（依抵達時間排序）。班次時間來自 Google 時刻表，實際以站牌／車站公告為準。</div>`
-      + opts.map((o, i) => optionCard(o, i, dest)).join('');
-    showOptionOnMap(0);
-    if (S.country === 'TW') tdxEnrich(opts);
+    box.innerHTML = `<div class="small" style="padding:8px 4px">從「${esc(from.name)}」前往「${esc(dest.name)}」，找到 ${opts.length} 種搭法（依抵達時間排序）。${source}</div>`
+      + opts.map((o, i) => optionCard(o, i, dest, from, cFrom)).join('');
+    box.dataset.optholder = '1';
+    box.goOpts = opts;
+    if (top) S.goOpts = opts;
+    showOptionOnMap(0, box);
+    if (cFrom === 'TW') tdxEnrich(opts, box);
   } catch (e) {
     console.warn(e);
     box.innerHTML = `<div class="empty">查詢失敗：${esc(e.message)}</div>`;
   }
 }
 
-function showOptionOnMap(i) {
-  const o = S.goOpts?.[i];
+function showOptionOnMap(i, holder) {
+  const o = (holder?.goOpts || S.goOpts)?.[i];
   if (!o || !S.map || !o.path.length) return;
   if (S.routeLine) S.routeLine.setMap(null);
   S.routeLine = new google.maps.Polyline({ map: S.map, path: o.path, strokeColor: '#2563eb', strokeWeight: 5, strokeOpacity: 0.85 });
   const b = new google.maps.LatLngBounds();
   o.path.forEach((p) => b.extend(p));
   S.map.fitBounds(b, 40);
+}
+
+// ---------- 台灣 ⇄ 日本：到機場 → 航班 → 機場到目的地 ----------
+const AIRPORTS = {
+  TW: [
+    ['TPE', '桃園國際機場', 25.0777, 121.2328], ['TSA', '台北松山機場', 25.0694, 121.5525],
+    ['KHH', '高雄國際機場', 22.5771, 120.3500], ['RMQ', '台中國際機場', 24.2647, 120.6208],
+  ],
+  JP: [
+    ['NRT', '成田機場（東京）', 35.7720, 140.3929], ['HND', '羽田機場（東京）', 35.5494, 139.7798],
+    ['KIX', '關西機場（大阪）', 34.4320, 135.2304], ['UKB', '神戶機場', 34.6328, 135.2239],
+    ['NGO', '中部機場（名古屋）', 34.8584, 136.8054], ['FUK', '福岡機場', 33.5859, 130.4507],
+    ['CTS', '新千歲機場（札幌）', 42.7752, 141.6923], ['OKA', '那霸機場（沖繩）', 26.1958, 127.6459],
+    ['ISG', '石垣機場', 24.3964, 124.2450], ['SDJ', '仙台機場', 38.1397, 140.9170],
+    ['HIJ', '廣島機場', 34.4361, 132.9194], ['OKJ', '岡山機場', 34.7569, 133.8553],
+    ['TAK', '高松機場', 34.2142, 134.0156], ['MYJ', '松山機場（愛媛）', 33.8272, 132.6997],
+    ['KMJ', '熊本機場', 32.8373, 130.8551], ['KOJ', '鹿兒島機場', 31.8034, 130.7194],
+    ['KMQ', '小松機場（金澤）', 36.3946, 136.4065], ['FSZ', '靜岡機場', 34.7960, 138.1894],
+    ['IBR', '茨城機場', 36.1812, 140.4150], ['KIJ', '新潟機場', 37.9559, 139.1208],
+    ['HKD', '函館機場', 41.7700, 140.8219], ['AOJ', '青森機場', 40.7347, 140.6908],
+  ],
+};
+const airportList = (cc, loc, n) => AIRPORTS[cc]
+  .map(([code, name, lat, lng]) => ({ code, name, loc: { lat, lng }, km: distM(loc, { lat, lng }) / 1000 }))
+  .sort((a, b) => a.km - b.km).slice(0, n);
+
+function flightLinks() {
+  const a = S.ab;
+  const from = $('#abFromAp').value, to = $('#abToAp').value, date = $('#abDate').value;
+  const [y, m, d] = date.split('-');
+  const gf = `https://www.google.com/travel/flights?hl=zh-TW&curr=TWD&q=${encodeURIComponent(`Flights from ${from} to ${to} on ${date} one way`)}`;
+  const sk = `https://www.skyscanner.com.tw/transport/flights/${from.toLowerCase()}/${to.toLowerCase()}/${y.slice(2)}${m}${d}/?adultsv2=1`;
+  $('#abFlights').innerHTML = `<a class="go-btn" style="text-decoration:none" href="${esc(gf)}" target="_blank" rel="noopener">看航班時間與票價（Google 航班）➜</a>
+    <a class="ghost-btn" href="${esc(sk)}" target="_blank" rel="noopener">Skyscanner 比價</a>`;
+  a.fromAp = a.fromList.find((x) => x.code === from);
+  a.toAp = a.toList.find((x) => x.code === to);
+}
+
+function planAbroad(from, dest, cFrom, cTo) {
+  const box = $('#goResults');
+  const fromList = airportList(cFrom, from.loc, 3);
+  const toList = airportList(cTo, dest.loc, 4);
+  S.ab = { from, dest, cFrom, cTo, fromList, toList };
+  const tomorrow = new Date(Date.now() + 864e5);
+  const opt = (list) => list.map((x, k) => `<option value="${x.code}"${k === 0 ? ' selected' : ''}>${esc(x.name)}（${x.code}，距離約 ${Math.round(x.km)} 公里）</option>`).join('');
+  const land = { TW: '台灣', JP: '日本' };
+  box.innerHTML = `<div class="card abroad"><div class="detail">
+    <h3 style="margin:0 0 4px">✈️ ${esc(from.name)} → ${esc(dest.name)}</h3>
+    <div class="small">從${land[cFrom]}到${land[cTo]}要搭飛機，分成三段幫你查：</div>
+
+    <h4>① 到${land[cFrom]}的機場</h4>
+    <select id="abFromAp">${opt(fromList)}</select>
+    <div id="abLeg1"><div class="small">查詢中…</div></div>
+
+    <h4>② 搭飛機</h4>
+    <div class="row"><label class="small" style="flex:none;align-self:center">出發日</label>
+      <input id="abDate" type="date" value="${ymd(tomorrow)}" min="${ymd(new Date())}"></div>
+    <div class="row" style="margin-top:6px"><select id="abToAp">${opt(toList)}</select></div>
+    <div class="actions" id="abFlights"></div>
+    <div class="small">直飛航線、航班時間和票價每天會變，按上面按鈕會直接幫你搜好這一天、這兩個機場的航班。</div>
+
+    <h4>③ 抵達後：機場 → ${esc(dest.name)}</h4>
+    <button type="button" class="chip primary" data-ab="leg3">查機場到目的地怎麼搭</button>
+    <div id="abLeg3"></div>
+  </div></div>`;
+  flightLinks();
+  runLeg1();
+}
+
+function runLeg1() {
+  const a = S.ab;
+  planTrip({ name: a.fromAp.name, loc: a.fromAp.loc }, { box: $('#abLeg1'), from: a.from });
+}
+function runLeg3() {
+  const a = S.ab;
+  planTrip(a.dest, { box: $('#abLeg3'), from: { name: a.toAp.name, loc: a.toAp.loc } });
 }
 
 // 每 20 秒更新「還有幾分鐘」
@@ -943,12 +1100,19 @@ $('#go-view')?.addEventListener('click', (e) => {
   const rec = e.target.closest('[data-recent]');
   if (rec) { planTrip(loadRecent()[+rec.dataset.recent]); return; }
   const m = e.target.closest('[data-optmap]');
-  if (m) { showOptionOnMap(+m.dataset.optmap); $('#map').scrollIntoView({ behavior: 'smooth' }); return; }
+  if (m) { showOptionOnMap(+m.dataset.optmap, m.closest('[data-optholder]')); $('#map').scrollIntoView({ behavior: 'smooth' }); return; }
+  const ab = e.target.closest('[data-ab]');
+  if (ab) { runLeg3(); return; }
   const head = e.target.closest('[data-opt]');
   if (head) {
     head.parentElement.querySelector('.detail').classList.toggle('hidden');
-    showOptionOnMap(+head.dataset.opt);
+    showOptionOnMap(+head.dataset.opt, head.closest('[data-optholder]'));
   }
+});
+$('#go-view')?.addEventListener('change', (e) => {
+  if (e.target.id === 'abFromAp') { flightLinks(); $('#abLeg1').innerHTML = '<div class="small">查詢中…</div>'; runLeg1(); }
+  if (e.target.id === 'abToAp') { flightLinks(); $('#abLeg3').innerHTML = ''; }
+  if (e.target.id === 'abDate') flightLinks();
 });
 $('#goPref')?.addEventListener('change', () => S.goDest && planTrip(S.goDest));
 $('#goModes')?.addEventListener('change', () => S.goDest && planTrip(S.goDest));
@@ -1188,8 +1352,8 @@ function segKind(g) {
 }
 
 // 把官方資料填進每種搭法（只處理台灣、有 TDX 金鑰時）
-async function tdxEnrich(opts) {
-  const cells = document.querySelectorAll('[data-tdx]');
+async function tdxEnrich(opts, root = document) {
+  const cells = root.querySelectorAll('[data-tdx]');
   if (!cells.length) return;
   if (!tdxReady()) {
     cells.forEach((c) => { c.innerHTML = '<span class="small">想看官方即時到站？到 ⚙️ 設定填入 TDX 金鑰</span>'; });
@@ -1202,8 +1366,8 @@ async function tdxEnrich(opts) {
     if (!kind) return;
     jobs.set(`${i}-${j}`, { kind, g });
   }));
-  document.querySelectorAll('[data-tdx]').forEach((c) => { if (!jobs.has(c.dataset.tdx)) c.remove(); else c.innerHTML = '<span class="small">🛰️ 查詢官方資料…</span>'; });
-  const fill = (key, html) => document.querySelectorAll(`[data-tdx="${key}"]`).forEach((c) => { c.innerHTML = html; });
+  root.querySelectorAll('[data-tdx]').forEach((c) => { if (!jobs.has(c.dataset.tdx)) c.remove(); else c.innerHTML = '<span class="small">🛰️ 查詢官方資料…</span>'; });
+  const fill = (key, html) => root.querySelectorAll(`[data-tdx="${key}"]`).forEach((c) => { c.innerHTML = html; });
   await Promise.all([...jobs].map(async ([key, { kind, g }]) => {
     try {
       if (kind === 'BUS') fill(key, busEtaHtml(await busRealtime(g)));
@@ -1302,6 +1466,7 @@ $('#btnSettings').onclick = () => {
   $('#dwellSeconds').value = String(S.dwellSeconds);
   $('#notify').checked = S.notify;
   if ($('#tdxId')) { $('#tdxId').value = S.tdxId; $('#tdxSecret').value = S.tdxSecret; }
+  if ($('#rapidKey')) $('#rapidKey').value = S.rapidKey;
   $('#settings').showModal();
 };
 $('#settings').addEventListener('close', async () => {
@@ -1310,6 +1475,7 @@ $('#settings').addEventListener('close', async () => {
   S.moveThreshold = +$('#moveThreshold').value; save('moveThreshold', S.moveThreshold);
   S.dwellSeconds = +$('#dwellSeconds').value; save('dwellSeconds', S.dwellSeconds);
   S.notify = $('#notify').checked; save('notify', S.notify ? '1' : '0');
+  if ($('#rapidKey')) { S.rapidKey = $('#rapidKey').value.trim(); save('rapidKey', S.rapidKey); }
   if ($('#tdxId')) {
     const id = $('#tdxId').value.trim(), sec = $('#tdxSecret').value.trim();
     if (id !== S.tdxId || sec !== S.tdxSecret) { S.tdxId = id; S.tdxSecret = sec; S.tdxTok = null; save('tdxId', id); save('tdxSecret', sec); }
@@ -1338,6 +1504,7 @@ if ($('#btnPhone')) $('#btnPhone').onclick = async () => {
   const h = new URLSearchParams();
   if (key) h.set('key', key);
   if ($('#tdxId')?.value.trim()) { h.set('tid', $('#tdxId').value.trim()); h.set('tsec', $('#tdxSecret').value.trim()); }
+  if ($('#rapidKey')?.value.trim()) h.set('rk', $('#rapidKey').value.trim());
   const url = `${location.origin}${location.pathname}${h.toString() ? `#${h}` : ''}`;
   if (!window.qrcode) { box.textContent = url; return; }
   const qr = qrcode(0, 'M');
@@ -1360,7 +1527,8 @@ if (!$('#placeSearch') && !sessionStorage.getItem('healed')) {
 (async function boot() {
   const hash = new URLSearchParams(location.hash.slice(1));
   if (hash.get('tid')) { S.tdxId = hash.get('tid'); S.tdxSecret = hash.get('tsec') || ''; save('tdxId', S.tdxId); save('tdxSecret', S.tdxSecret); }
-  if (hash.get('key') || hash.get('tid')) {
+  if (hash.get('rk')) { S.rapidKey = hash.get('rk'); save('rapidKey', S.rapidKey); }
+  if (hash.get('key') || hash.get('tid') || hash.get('rk')) {
     if (hash.get('key')) { S.key = hash.get('key'); save('gmKey', S.key); }
     history.replaceState(null, '', location.pathname + location.search);
   }
