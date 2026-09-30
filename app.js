@@ -1022,13 +1022,121 @@ function flightLinks() {
   const [y, m, d] = date.split('-');
   const gf = `https://www.google.com/travel/flights?hl=zh-TW&curr=TWD&q=${encodeURIComponent(`Flights from ${from} to ${to} on ${date} one way`)}`;
   const sk = `https://www.skyscanner.com.tw/transport/flights/${from.toLowerCase()}/${to.toLowerCase()}/${y.slice(2)}${m}${d}/?adultsv2=1`;
-  $('#abFlights').innerHTML = `<a class="go-btn" style="text-decoration:none" href="${esc(gf)}" target="_blank" rel="noopener">看航班時間與票價（Google 航班）➜</a>
+  $('#abFlights').innerHTML = `<a class="go-btn" style="text-decoration:none" href="${esc(gf)}" target="_blank" rel="noopener">查票價（Google 航班）➜</a>
     <a class="ghost-btn" href="${esc(sk)}" target="_blank" rel="noopener">Skyscanner 比價</a>`;
   a.fromAp = a.fromList.find((x) => x.code === from);
   a.toAp = a.toList.find((x) => x.code === to);
 }
 
-function planAbroad(from, dest, cFrom, cTo) {
+// ---------- 航班：TDX 官方航班表（GeneralSchedule）＋ 今天的即時起降（FIDS） ----------
+const AIRLINE_ZH = {
+  CI: '中華航空', BR: '長榮航空', IT: '台灣虎航', JX: '星宇航空', AE: '華信航空', B7: '立榮航空',
+  JL: '日本航空', NH: '全日空', MM: '樂桃航空', GK: '捷星日本', ZG: 'ZIPAIR', IJ: '春秋航空日本', '9C': '春秋航空',
+  AK: '亞洲航空', D7: '亞洲航空 X', TR: '酷航', CX: '國泰航空', UO: '香港快運', HX: '香港航空', NU: '日本越洋航空',
+  VJ: '越捷航空', '5J': '宿霧太平洋', FD: '泰亞洲航空', XJ: '泰亞洲航空 X', KE: '大韓航空', OZ: '韓亞航空',
+  BC: '天馬航空', HD: 'AIRDO', '6J': 'Solaseed', UA: '聯合航空', DL: '達美航空',
+};
+const WEEKDAY = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const flightNo = (s) => String(s || '').toUpperCase().replace(/^([A-Z0-9]{2})0*(\d)/, '$1$2');
+
+async function schedulesFrom(dep, arrCodes) {
+  const f = `DepartureAirportID eq '${dep}' and (${arrCodes.map((c) => `ArrivalAirportID eq '${c}'`).join(' or ')})`;
+  return tdxGet('/v2/Air/GeneralSchedule/International', { $filter: f }, 6 * 3600e3);
+}
+
+function flightsOn(rows, dep, arr, date) {
+  const day = new Date(`${date}T12:00:00`);
+  const wd = WEEKDAY[day.getDay()];
+  const seen = new Set();
+  return (rows || [])
+    .filter((r) => r.DepartureAirportID === dep && r.ArrivalAirportID === arr && r[wd]
+      && String(r.ScheduleStartDate).slice(0, 10) <= date && String(r.ScheduleEndDate).slice(0, 10) >= date)
+    .filter((r) => { const k = flightNo(r.FlightNumber); if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => String(a.DepartureTime).localeCompare(String(b.DepartureTime)));
+}
+
+// 今天的航班：加上即時狀態（延誤、登機門）
+async function fidsToday(dep, arr, outbound) {
+  const rows = outbound
+    ? await tdxGet(`/v2/Air/FIDS/Airport/Departure/${dep}`, { $filter: `ArrivalAirportID eq '${arr}'` })
+    : await tdxGet(`/v2/Air/FIDS/Airport/Arrival/${arr}`, { $filter: `DepartureAirportID eq '${dep}'` });
+  const m = new Map();
+  (rows || []).forEach((r) => m.set(flightNo(`${r.AirlineID}${r.FlightNumber}`), r));
+  return m;
+}
+
+function fidsText(r, outbound) {
+  if (!r) return '';
+  const t = (x) => (x ? String(x).slice(11, 16) : '');
+  const bits = [];
+  if (outbound) {
+    const act = t(r.ActualDepartureTime), est = t(r.EstimatedDepartureTime), sch = t(r.ScheduleDepartureTime);
+    if (act) bits.push(`實際 ${act} 起飛`);
+    else if (est && est !== sch) bits.push(`<b class="live soon">預計 ${est} 起飛</b>`);
+    if (r.Terminal) bits.push(`第 ${esc(r.Terminal)} 航廈`);
+    if (r.Gate) bits.push(`${esc(r.Gate)} 號登機門`);
+    if (r.DepartureRemark) bits.push(`<b class="live${/延|取消|Delay|Cancel/i.test(r.DepartureRemark) ? ' soon' : ''}">${esc(r.DepartureRemark)}</b>`);
+  } else {
+    const act = t(r.ActualArrivalTime), est = t(r.EstimatedArrivalTime);
+    if (act) bits.push(`實際 ${act} 抵達`);
+    else if (est) bits.push(`預計 ${est} 抵達`);
+    if (r.ArrivalRemark) bits.push(`<b class="live${/延|取消|Delay|Cancel/i.test(r.ArrivalRemark) ? ' soon' : ''}">${esc(r.ArrivalRemark)}</b>`);
+  }
+  return bits.length ? `<div class="sd">🛰️ 今天即時：${bits.join(' · ')}</div>` : '';
+}
+
+async function loadAbroadFlights(pickBest) {
+  const a = S.ab;
+  const box = $('#abFlightList');
+  if (!box) return;
+  if (!tdxReady()) { box.innerHTML = '<div class="small">填入 TDX 金鑰後，這裡會列出官方航班表。</div>'; return; }
+  box.innerHTML = '<div class="small">🛰️ 查詢官方航班表…</div>';
+  const date = $('#abDate').value;
+  try {
+    if (!a.sched) {
+      a.sched = {};
+      for (const ap of a.fromList) a.sched[ap.code] = await schedulesFrom(ap.code, a.toList.map((x) => x.code));
+    }
+    const count = (f, t) => flightsOn(a.sched[f], f, t, date).length;
+    // 第一次：自動選「有直飛」而且最近的機場組合
+    if (pickBest) {
+      outer: for (const f of a.fromList) for (const t of a.toList) {
+        if (count(f.code, t.code)) { $('#abFromAp').value = f.code; $('#abToAp').value = t.code; break outer; }
+      }
+    }
+    const fromC = $('#abFromAp').value, toC = $('#abToAp').value;
+    // 選單上標出每個機場有幾班直飛
+    [...$('#abToAp').options].forEach((o) => {
+      const x = a.toList.find((y) => y.code === o.value), n = count(fromC, o.value);
+      o.textContent = `${x.name}（${x.code}，約 ${Math.round(x.km)} 公里）${n ? ` · ${n} 班直飛` : ' · 沒有直飛'}`;
+    });
+    [...$('#abFromAp').options].forEach((o) => {
+      const x = a.fromList.find((y) => y.code === o.value), n = count(o.value, toC);
+      o.textContent = `${x.name}（${x.code}，約 ${Math.round(x.km)} 公里）${n ? ` · ${n} 班直飛` : ' · 沒有直飛'}`;
+    });
+    const list = flightsOn(a.sched[fromC], fromC, toC, date);
+    if (!list.length) {
+      box.innerHTML = `<div class="small">官方資料：${esc(date)} 這兩個機場之間沒有直飛航班，換一個機場試試看（選單上有標出哪些有直飛）。</div>`;
+      return;
+    }
+    const outbound = a.cFrom === 'TW';
+    const today = date === ymd(new Date());
+    const live = today ? await fidsToday(fromC, toC, outbound).catch(() => new Map()) : new Map();
+    box.innerHTML = `<div class="small">🛰️ 官方航班表（${esc(date)}，${list.length} 班直飛，時間皆為當地時間）：</div>
+      <ol class="steps flights">${list.map((r) => {
+        const al = String(r.FlightNumber).slice(0, 2);
+        return `<li><b>${esc(r.DepartureTime)}</b> 起飛 → <b>${esc(r.ArrivalTime)}</b> 抵達　${esc(AIRLINE_ZH[r.AirlineID] || AIRLINE_ZH[al] || r.AirlineID)} ${esc(r.FlightNumber)}
+          ${r.CodeShare?.length ? `<div class="sd">共用班號：${r.CodeShare.map((c) => esc(c.FlightNumber || c)).join('、')}</div>` : ''}
+          ${fidsText(live.get(flightNo(r.FlightNumber)), outbound)}</li>`;
+      }).join('')}</ol>
+      <div class="small">票價要到航空公司或下方的比價網站查。</div>`;
+  } catch (e) {
+    console.warn(e);
+    box.innerHTML = `<div class="small">官方航班表暫時查不到（${esc(e.message)}）</div>`;
+  }
+}
+
+async function planAbroad(from, dest, cFrom, cTo) {
   const box = $('#goResults');
   const fromList = airportList(cFrom, from.loc, 3);
   const toList = airportList(cTo, dest.loc, 4);
@@ -1048,13 +1156,14 @@ function planAbroad(from, dest, cFrom, cTo) {
     <div class="row"><label class="small" style="flex:none;align-self:center">出發日</label>
       <input id="abDate" type="date" value="${ymd(tomorrow)}" min="${ymd(new Date())}"></div>
     <div class="row" style="margin-top:6px"><select id="abToAp">${opt(toList)}</select></div>
+    <div id="abFlightList"></div>
     <div class="actions" id="abFlights"></div>
-    <div class="small">直飛航線、航班時間和票價每天會變，按上面按鈕會直接幫你搜好這一天、這兩個機場的航班。</div>
 
     <h4>③ 抵達後：機場 → ${esc(dest.name)}</h4>
     <button type="button" class="chip primary" data-ab="leg3">查機場到目的地怎麼搭</button>
     <div id="abLeg3"></div>
   </div></div>`;
+  await loadAbroadFlights(true);
   flightLinks();
   runLeg1();
 }
@@ -1113,9 +1222,9 @@ $('#go-view')?.addEventListener('click', (e) => {
   }
 });
 $('#go-view')?.addEventListener('change', (e) => {
-  if (e.target.id === 'abFromAp') { flightLinks(); $('#abLeg1').innerHTML = '<div class="small">查詢中…</div>'; runLeg1(); }
-  if (e.target.id === 'abToAp') { flightLinks(); $('#abLeg3').innerHTML = ''; }
-  if (e.target.id === 'abDate') flightLinks();
+  if (e.target.id === 'abFromAp') { flightLinks(); loadAbroadFlights(); $('#abLeg1').innerHTML = '<div class="small">查詢中…</div>'; runLeg1(); }
+  if (e.target.id === 'abToAp') { flightLinks(); loadAbroadFlights(); $('#abLeg3').innerHTML = ''; }
+  if (e.target.id === 'abDate') { flightLinks(); loadAbroadFlights(); }
 });
 $('#goPref')?.addEventListener('change', () => S.goDest && planTrip(S.goDest));
 $('#goModes')?.addEventListener('change', () => S.goDest && planTrip(S.goDest));
