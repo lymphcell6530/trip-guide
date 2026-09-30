@@ -966,7 +966,8 @@ async function planTrip(dest, opt = {}) {
           <div class="actions"><a class="go-btn" style="text-decoration:none" href="${esc(mapsLink(from, dest))}" target="_blank" rel="noopener">用 Google 地圖再查一次 ➜</a></div></div></div>`;
       return;
     }
-    box.innerHTML = `<div class="small" style="padding:8px 4px">從「${esc(from.name)}」前往「${esc(dest.name)}」，找到 ${opts.length} 種搭法（依抵達時間排序）。${source}</div>`
+    if (opt.max) opts = opts.slice(0, opt.max);
+    box.innerHTML = `<div class="small" style="padding:8px 4px">從「${esc(from.name)}」前往「${esc(dest.name)}」，${opt.max ? `最好的 ${opts.length} 種搭法` : `找到 ${opts.length} 種搭法（依抵達時間排序）`}。${source}</div>`
       + opts.map((o, i) => optionCard(o, i, dest, from, cFrom)).join('');
     box.dataset.optholder = '1';
     box.goOpts = opts;
@@ -1009,9 +1010,11 @@ const AIRPORTS = {
     ['HKD', '函館機場', 41.7700, 140.8219], ['AOJ', '青森機場', 40.7347, 140.6908],
   ],
 };
+// 大機場（國際航班多）優先：小機場的距離乘上 1.8 再排序
+const HUB = new Set(['TPE', 'KHH', 'NRT', 'HND', 'KIX', 'NGO', 'FUK', 'CTS', 'OKA']);
 const airportList = (cc, loc, n) => AIRPORTS[cc]
   .map(([code, name, lat, lng]) => ({ code, name, loc: { lat, lng }, km: distM(loc, { lat, lng }) / 1000 }))
-  .sort((a, b) => a.km - b.km).slice(0, n);
+  .sort((a, b) => a.km * (HUB.has(a.code) ? 1 : 1.8) - b.km * (HUB.has(b.code) ? 1 : 1.8)).slice(0, n);
 
 function flightLinks() {
   const a = S.ab;
@@ -1058,11 +1061,11 @@ function planAbroad(from, dest, cFrom, cTo) {
 
 function runLeg1() {
   const a = S.ab;
-  planTrip({ name: a.fromAp.name, loc: a.fromAp.loc }, { box: $('#abLeg1'), from: a.from });
+  planTrip({ name: a.fromAp.name, loc: a.fromAp.loc }, { box: $('#abLeg1'), from: a.from, max: 3 });
 }
 function runLeg3() {
   const a = S.ab;
-  planTrip(a.dest, { box: $('#abLeg3'), from: { name: a.toAp.name, loc: a.toAp.loc } });
+  planTrip(a.dest, { box: $('#abLeg3'), from: { name: a.toAp.name, loc: a.toAp.loc }, max: 3 });
 }
 
 // 每 20 秒更新「還有幾分鐘」
