@@ -580,7 +580,8 @@ function switchTab(name) {
   $('#list-food').classList.toggle('hidden', name !== 'food');
   $('#route-view').classList.toggle('hidden', name !== 'route');
   $('#go-view')?.classList.toggle('hidden', name !== 'go');
-  $('#filters').classList.toggle('hidden', name === 'route' || name === 'go');
+  $('#person-view')?.classList.toggle('hidden', name !== 'person');
+  $('#filters').classList.toggle('hidden', name === 'route' || name === 'go' || name === 'person');
   if (name === 'go') paintGoFrom();
 }
 
@@ -1694,6 +1695,7 @@ async function renderWiki() {
       ${linkChips(intro.links, cur.lang)}
       ${secs.length ? '<h4>📚 章節（點開來看）</h4>' : ''}
       ${secs.map((s, k) => `<details class="wr-sec" data-sec="${s.index}"><summary>${esc(heads[k])}</summary><div class="wr-sec-body small">載入中…</div></details>`).join('')}
+      <div class="actions"><button type="button" class="ghost-btn" data-personfind="${esc(stripParen(cur.lang === 'zh' ? label : realTitle))}">👤 如果這是人物：找跟他有關、可以參觀的地方</button></div>
       <div class="small" style="margin:12px 0">資料來源：<a href="${esc(url)}" target="_blank" rel="noopener">${cur.lang === 'zh' ? '' : esc(LANG_NAME[cur.lang] || cur.lang)}維基百科「${esc(realTitle)}」</a>${cur.lang !== 'zh' ? '（Google 自動翻譯）' : ''}</div>`;
     // 地名由來：自動打開「地名／由來／歷史」那一章
     if (cur.focus) {
@@ -1731,6 +1733,8 @@ $('#wikiReader')?.addEventListener('toggle', (e) => { const d = e.target.closest
 $('#wikiReader')?.addEventListener('click', (e) => {
   const chip = e.target.closest('[data-wiki]');
   if (chip) { openWiki(chip.dataset.wiki, chip.dataset.lang); return; }
+  const pf = e.target.closest('[data-personfind]');
+  if (pf) { personFromReader(pf.dataset.personfind); return; }
   if (e.target.closest('#wrBack')) { WR.stack.pop(); renderWiki(); return; }
   if (e.target.closest('#wrClose')) $('#wikiReader').close();
 });
@@ -1768,6 +1772,263 @@ document.addEventListener('click', (e) => {
   const [lang, ...t] = d.dataset.deep.split('|');
   openWiki(t.join('|'), lang, { focus: /(歷史|历史|歴史|沿革|由來|由来)/ });
 });
+
+// ---------- 👤 人物：找跟歷史人物有關、可以參觀的地方，並說明為什麼要去 ----------
+const stripParen = (t) => String(t || '').replace(/\s*[（(].*?[)）]\s*$/, '');
+const SKIP_PLACE = /(爭議|争議|事件|選舉|選区|選區|列表|一覧|年表)/;
+
+async function resolvePerson(name) {
+  for (const lang of ['zh', 'ja']) {
+    const s = await wikiApi({ action: 'query', list: 'search', srsearch: name, srlimit: '5', srnamespace: '0' }, lang);
+    const hits = (s.query?.search || []).map((r) => r.title);
+    const title = hits.find((t) => norm(stripParen(t)) === norm(name)) || hits.find((t) => nameMatch(stripParen(t), name)) || (lang === 'zh' ? hits[0] : null);
+    if (!title) continue;
+    const d = await wikiApi({
+      action: 'query', titles: title, redirects: '1', prop: 'extracts|pageimages|langlinks|info',
+      exintro: '1', explaintext: '1', exsentences: '3', piprop: 'thumbnail', pithumbsize: '240',
+      lllang: lang === 'zh' ? 'ja' : 'zh', inprop: 'varianttitles',
+    }, lang);
+    const p = Object.values(d.query?.pages || {})[0];
+    if (!p || p.missing !== undefined) continue;
+    const other = p.langlinks?.[0]?.['*'] || null;
+    return {
+      lang, title: p.title, show: p.varianttitles?.['zh-tw'] || p.title, intro: p.extract || '', thumb: p.thumbnail?.source,
+      zh: lang === 'zh' ? p.title : other, ja: lang === 'ja' ? p.title : other,
+    };
+  }
+  return null;
+}
+
+async function wikiSearchTitles(lang, q, limit = 30) {
+  const d = await wikiApi({ action: 'query', list: 'search', srsearch: q, srlimit: String(limit), srnamespace: '0' }, lang);
+  return (d.query?.search || []).map((r) => r.title);
+}
+
+async function wikiPlacesInfo(lang, titles) {
+  const out = [];
+  for (let i = 0; i < titles.length; i += 40) {
+    const d = await wikiApi({
+      action: 'query', titles: titles.slice(i, i + 40).join('|'), redirects: '1',
+      prop: 'coordinates|pageimages|description|info', colimit: 'max', piprop: 'thumbnail', pithumbsize: '240', pilimit: 'max', inprop: 'varianttitles',
+    }, lang);
+    Object.values(d.query?.pages || {}).forEach((p) => {
+      if (!p.coordinates) return;
+      out.push({
+        title: p.title, show: p.varianttitles?.['zh-tw'] || p.title, lang,
+        loc: { lat: p.coordinates[0].lat, lng: p.coordinates[0].lon }, thumb: p.thumbnail?.source, desc: p.description || '',
+      });
+    });
+  }
+  return out;
+}
+
+async function personPlaces(person, typed, center, km, country) {
+  const near = km ? ` nearcoord:${km}km,${center.lat},${center.lng}` : '';
+  const score = new Map();
+  const add = (lang, titles, w) => titles.forEach((t, i) => {
+    const k = `${lang}:${t}`;
+    score.set(k, (score.get(k) || 0) + w - i * 0.02);
+  });
+  const langs = [];
+  if (person.zh) langs.push(['zh', person.zh, typed]);
+  if (person.ja && (country === 'JP' || !person.zh || !km)) langs.push(['ja', person.ja, stripParen(person.ja)]);
+  for (const [lang, title, q] of langs) {
+    const [a, b] = await Promise.all([
+      wikiSearchTitles(lang, `"${stripParen(q)}"${near}`),
+      wikiSearchTitles(lang, `linksto:"${title}"${near}`),
+    ]);
+    add(lang, a, 2);
+    add(lang, b, 1);
+  }
+  const byLang = {};
+  [...score.keys()].forEach((k) => { const [lang, ...t] = k.split(':'); (byLang[lang] ||= []).push(t.join(':')); });
+  let places = [];
+  for (const [lang, titles] of Object.entries(byLang)) places.push(...await wikiPlacesInfo(lang, titles));
+  const selfNames = [person.zh, person.ja].filter(Boolean).map(stripParen);
+  places = places
+    .filter((p) => !selfNames.includes(stripParen(p.title)) && !NOT_SIGHT.test(stripParen(p.title)) && !SKIP_PLACE.test(p.title))
+    .map((p) => ({ ...p, score: score.get(`${p.lang}:${p.title}`) || 0, dist: distM(center, p.loc) }))
+    .filter((p) => !km || p.dist <= km * 1050);
+  // 中文、日文同一個地方只留一個（優先中文）
+  const zh = places.filter((p) => p.lang === 'zh');
+  places = [...zh, ...places.filter((p) => p.lang !== 'zh' && !zh.some((z) => distM(z.loc, p.loc) < 150))];
+  return places.sort((a, b) => b.score - a.score || a.dist - b.dist).slice(0, 12);
+}
+
+// 從景點條目裡找出提到這個人的句子＝為什麼要去；找不到就從人物條目裡找提到這個地方的句子
+const splitSentences = (text) => text.replace(/\n=+[^=\n]+=+\n/g, '\n').split(/(?<=[。！？!?])|\n/).map((s) => s.trim()).filter((s) => s.length > 6);
+async function fullText(lang, title) {
+  const d = await wikiApi({ action: 'query', prop: 'extracts', explaintext: '1', titles: title, redirects: '1' }, lang);
+  return Object.values(d.query?.pages || {})[0]?.extract || '';
+}
+async function whyVisit(place, aliases, personText) {
+  const text = await fullText(place.lang, place.title).catch(() => '');
+  let hits = splitSentences(text).filter((s) => aliases.some((a) => a && s.includes(a)));
+  let from = 'place';
+  if (!hits.length && personText) {
+    const pn = stripParen(place.show);
+    hits = splitSentences(personText).filter((s) => s.includes(pn) || s.includes(stripParen(place.title)));
+    from = 'person';
+  }
+  const why = hits.slice(0, 3).map((s) => (s.length > 170 ? `${s.slice(0, 170)}…` : s)).join('');
+  return { why, from };
+}
+
+function personCenter() {
+  const where = $('#personWhere').value;
+  if (where === 'dest') return S.goDest ? { name: S.goDest.name, loc: S.goDest.loc } : null;
+  if (where === 'place') return S.personPlace || null;
+  return S.origin ? { name: S.manual ? ($('#placeQuery')?.value || '你選的位置') : '你目前的位置', loc: S.origin } : null;
+}
+
+function drawPersonMarkers(list) {
+  (S.personMarkers || []).forEach((m) => (m.map = null));
+  S.personMarkers = [];
+  if (!S.map) return;
+  list.forEach((p, k) => {
+    const m = new S.gm.AdvancedMarkerElement({ map: S.map, position: p.loc, content: pin(String(k + 1), '#7c3aed'), title: p.label });
+    m.addListener('click', () => document.getElementById(`pp-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+    S.personMarkers.push(m);
+  });
+  if (list.length) {
+    const b = new google.maps.LatLngBounds();
+    list.forEach((p) => b.extend(p.loc));
+    S.map.fitBounds(b, 50);
+  }
+}
+
+// 參訪順序：從起點開始，每次去最近的下一個（最近鄰法）
+function visitOrder(center, list) {
+  const left = [...list], order = [];
+  let at = center;
+  while (left.length) {
+    let k = 0;
+    left.forEach((p, i) => { if (distM(at, p.loc) < distM(at, left[k].loc)) k = i; });
+    const p = left.splice(k, 1)[0];
+    order.push({ ...p, hop: distM(at, p.loc) });
+    at = p.loc;
+  }
+  return order;
+}
+
+function itineraryHtml(center, list) {
+  const order = visitOrder(center.loc, list.slice(0, 9));
+  const total = order.reduce((a, p) => a + p.hop, 0);
+  const mode = total > 4000 ? 'driving' : 'walking';
+  const last = order[order.length - 1];
+  const q = new URLSearchParams({
+    api: '1', origin: `${center.loc.lat},${center.loc.lng}`, destination: `${last.loc.lat},${last.loc.lng}`, travelmode: mode,
+  });
+  if (order.length > 1) q.set('waypoints', order.slice(0, -1).map((p) => `${p.loc.lat},${p.loc.lng}`).join('|'));
+  return `<div class="card"><div class="detail"><h4>🗺️ 建議參訪順序（從${esc(center.name)}出發，照遠近排）</h4>
+    <ol class="steps">${order.map((p) => `<li><b>${esc(p.label)}</b><div class="sd">上一站過來約 ${fmtDist(p.hop)}${p.hop < 2500 ? `，步行約 ${walkGuess(p.hop)}` : ''}</div></li>`).join('')}</ol>
+    <div class="small">全程直線距離約 ${fmtDist(total)}${total > 4000 ? '，距離較遠，建議搭車或開車' : '，走路就能逛完'}。</div>
+    <div class="actions"><a class="go-btn" style="text-decoration:none" href="https://www.google.com/maps/dir/?${q}" target="_blank" rel="noopener">用 Google 地圖照這個順序走 ➜</a></div></div></div>`;
+}
+
+async function personSearch() {
+  const typed = $('#personQuery').value.trim();
+  const box = $('#personResults');
+  if (!typed) return;
+  $('#personQuery').blur();
+  if ($('#personWhere').value === 'place') {
+    const q = $('#personPlace').value.trim();
+    if (!q) { box.innerHTML = '<div class="empty">請輸入要以哪裡為中心，例如：台南、京都。</div>'; return; }
+    box.innerHTML = '<div class="empty">搜尋地點…</div>';
+    const hit = (await findPlaces(q).catch(() => []))[0];
+    if (!hit) { box.innerHTML = '<div class="empty">找不到這個地點，換個說法試試看。</div>'; return; }
+    S.personPlace = { name: hit.name, loc: hit.loc };
+  }
+  const center = personCenter();
+  if (!center) {
+    box.innerHTML = $('#personWhere').value === 'dest'
+      ? '<div class="empty">還沒有查過要去的地點。先到「🚌 我要去」輸入目的地，或改選其他範圍。</div>'
+      : '<div class="empty">還沒拿到你的位置，請稍等一下或按 📍。</div>';
+    return;
+  }
+  const km = +$('#personKm').value;
+  box.innerHTML = `<div class="empty">正在找「${esc(typed)}」的資料…</div>`;
+  try {
+    const person = await resolvePerson(typed);
+    if (!person) { box.innerHTML = '<div class="empty">維基百科上找不到這個人物，換個寫法試試看（例如全名）。</div>'; return; }
+    const country = guessCountry(center.loc) || S.country;
+    let intro = person.intro;
+    if (person.lang !== 'zh') { const tr = await translateMany([intro], person.lang); if (tr) intro = tr[0]; }
+    const pName = person.lang === 'zh' ? stripParen(person.show) : stripParen(person.title);
+    const head = `<div class="card"><div class="card-head" style="cursor:default">
+        ${person.thumb ? `<img class="thumb" src="${esc(person.thumb)}" alt="">` : '<div class="thumb"></div>'}
+        <div class="card-body"><h3>👤 ${esc(pName)}</h3><p class="desc">${esc(intro.length > 220 ? `${intro.slice(0, 220)}…` : intro)}</p>
+        <div class="actions"><button type="button" class="ghost-btn" data-deep="${esc(person.lang)}|${esc(person.title)}">📖 人物生平</button></div></div></div></div>`;
+    box.innerHTML = `${head}<div class="empty">正在找${esc(center.name)}附近跟${esc(pName)}有關的地方…</div>`;
+    let list = await personPlaces(person, typed, center.loc, km, country);
+    if (!list.length) {
+      box.innerHTML = `${head}<div class="empty">${km ? `${esc(center.name)}附近 ${km} 公里內` : ''}沒有找到跟${esc(pName)}有關、而且有地點資料的景點。<br>可以把範圍調大，或選「不限範圍」看看他的足跡都在哪裡。</div>`;
+      drawPersonMarkers([]);
+      return;
+    }
+    // 為什麼要去
+    const aliases = [...new Set([typed, pName, stripParen(person.zh), stripParen(person.ja)].filter((a) => a && a.length >= 2))];
+    const personText = await fullText(person.lang, person.title).catch(() => '');
+    const whys = await Promise.all(list.map((p) => whyVisit(p, aliases, personText)));
+    list = list.map((p, k) => ({ ...p, ...whys[k], label: stripParen(p.show) }));
+    // 日文的地名、故事翻成中文
+    const ja = list.filter((p) => p.lang !== 'zh');
+    if (ja.length) {
+      const tr = await translateMany(ja.flatMap((p) => [p.label, p.why || '']), 'ja');
+      if (tr) ja.forEach((p, k) => { p.labelZh = tr[k * 2]; p.why = tr[k * 2 + 1] || p.why; });
+    }
+    // 有故事的排前面
+    list.sort((a, b) => (b.why ? 1 : 0) - (a.why ? 1 : 0) || b.score - a.score || a.dist - b.dist);
+    S.personList = list;
+    S.personCenterNow = center;
+    drawPersonMarkers(list);
+    box.innerHTML = `${head}
+      <div class="small" style="padding:8px 4px">${km ? `在「${esc(center.name)}」附近 ${km} 公里內，` : ''}找到 ${list.length} 個跟 <b>${esc(pName)}</b> 有關的地方（地圖上紫色數字）。</div>
+      ${list.map((p, k) => `<article class="card" id="pp-${k}"><div class="card-head" style="cursor:default">
+          ${p.thumb ? `<img class="thumb" src="${esc(p.thumb)}" alt="" loading="lazy">` : '<div class="thumb"></div>'}
+          <div class="card-body"><h3>${k + 1}. ${esc(p.labelZh && p.labelZh !== p.label ? `${p.labelZh}（${p.label}）` : p.label)}</h3>
+            <div class="meta"><span>📏 ${fmtDist(p.dist)}</span>${p.dist < 3000 ? `<span>🚶 約 ${walkGuess(p.dist)}</span>` : ''}${p.desc && p.lang === 'zh' ? `<span class="tag">${esc(p.desc)}</span>` : ''}</div>
+          </div></div>
+          <div class="detail"><h4>🔎 為什麼要去</h4>
+            <div class="story">${p.why ? esc(p.why) : '條目裡沒有直接寫到他，但這裡跟他有關聯。按「深入閱讀」看看完整介紹。'}</div>
+            ${p.why && p.from === 'person' ? `<div class="small">（摘自${esc(pName)}的生平條目）</div>` : ''}${p.lang !== 'zh' && p.why ? '<div class="small">（日文維基百科，Google 自動翻譯）</div>' : ''}
+            <div class="actions">
+              <button type="button" class="go-btn" data-pgo="${k}">帶我去 ➜</button>
+              <button type="button" class="ghost-btn" data-deep="${esc(p.lang)}|${esc(p.title)}">📖 深入閱讀</button>
+              <button type="button" class="ghost-btn" data-pmap="${k}">在地圖上看</button>
+            </div></div></article>`).join('')}
+      ${itineraryHtml(center, list)}
+      <div class="small" style="padding:8px 4px">資料來源：維基百科。故事是從條目裡「提到這個人」的句子整理出來的，想看完整內容可以按「深入閱讀」。</div>`;
+  } catch (e) {
+    console.warn(e);
+    box.innerHTML = `<div class="empty">查詢失敗：${esc(e.message)}</div>`;
+  }
+}
+
+$('#personForm')?.addEventListener('submit', (e) => { e.preventDefault(); personSearch(); });
+$('#personWhere')?.addEventListener('change', () => $('#personPlace').classList.toggle('hidden', $('#personWhere').value !== 'place'));
+$('#person-view')?.addEventListener('click', (e) => {
+  const go = e.target.closest('[data-pgo]');
+  if (go) {
+    const p = S.personList[+go.dataset.pgo];
+    switchTab('go');
+    planTrip({ name: p.labelZh || p.label, loc: p.loc });
+    return;
+  }
+  const m = e.target.closest('[data-pmap]');
+  if (m) {
+    const p = S.personList[+m.dataset.pmap];
+    if (S.map) { S.map.panTo(p.loc); S.map.setZoom(16); }
+    $('#map').scrollIntoView({ behavior: 'smooth' });
+  }
+});
+// 從深入閱讀的人物條目直接找相關景點
+function personFromReader(name) {
+  $('#wikiReader').close();
+  switchTab('person');
+  $('#personQuery').value = name;
+  personSearch();
+}
 
 // ---------- 通知 ----------
 function notify(title, body) {

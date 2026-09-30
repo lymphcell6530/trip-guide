@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=29">
+  <link rel="stylesheet" href="style.css?v=33">
 </head>
 <body>
   <header class="topbar">
@@ -39,6 +39,7 @@
       <nav class="tabs">
         <button class="tab active" data-tab="sights">🏯 景點</button>
         <button class="tab" data-tab="food">🍜 美食</button>
+        <button class="tab" data-tab="person">👤 人物</button>
         <button class="tab" data-tab="go">🚌 我要去</button>
         <button class="tab" data-tab="route" id="tabRoute" disabled>🧭 路線</button>
       </nav>
@@ -58,6 +59,30 @@
       <div id="list-sights" class="list"></div>
       <div id="list-food" class="list hidden"></div>
       <div id="route-view" class="list hidden"></div>
+      <div id="person-view" class="list hidden">
+        <form id="personForm" class="go-form" autocomplete="off">
+          <div class="small">輸入歷史人物，找附近跟他有關、可以參觀的地方，並告訴你為什麼要去。</div>
+          <div class="row">
+            <input id="personQuery" type="search" placeholder="例如：鄭成功、劉銘傳、坂本龍馬、織田信長" enterkeyhint="search">
+            <button type="submit" class="chip primary">找景點</button>
+          </div>
+          <div class="row">
+            <select id="personWhere">
+              <option value="here">目前位置（或搜尋的地點）附近</option>
+              <option value="dest">我要去的地點附近</option>
+              <option value="place">另外輸入地點…</option>
+            </select>
+            <select id="personKm">
+              <option value="5">5 公里內</option>
+              <option value="15" selected>15 公里內</option>
+              <option value="50">50 公里內</option>
+              <option value="0">不限範圍（看他的足跡）</option>
+            </select>
+          </div>
+          <input id="personPlace" type="search" class="hidden" placeholder="以哪裡為中心？例如：台南、京都、高知">
+        </form>
+        <div id="personResults"></div>
+      </div>
       <div id="go-view" class="list hidden">
         <form id="goForm" class="go-form" autocomplete="off">
           <div class="small">從<b id="goFrom">你目前的位置</b>出發，要去哪裡？</div>
@@ -133,6 +158,6 @@
     <div id="wrBody" class="reader-body"></div>
   </dialog>
 
-  <script src="app.js?v=32"></script>
+  <script src="app.js?v=33"></script>
 </body>
 </html>
