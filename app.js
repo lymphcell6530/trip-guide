@@ -2272,6 +2272,11 @@ if ($('#btnPhone')) $('#btnPhone').onclick = async () => {
   box.scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
 
+// 手機：地圖收起來，列表全螢幕
+$('#btnListFull')?.addEventListener('click', () => { document.body.classList.add('list-full'); save('listFull', '1'); });
+$('#btnShowMap')?.addEventListener('click', () => { document.body.classList.remove('list-full'); save('listFull', '0'); });
+if (load('listFull', '0') === '1') document.body.classList.add('list-full');
+
 // ---------- 啟動 ----------
 // 畫面（index.html）和程式（app.js）版本不一致時：清掉快取重新載入一次
 if (!$('#placeSearch') && !sessionStorage.getItem('healed')) {
