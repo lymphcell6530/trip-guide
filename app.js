@@ -1915,6 +1915,7 @@ function visitOrder(center, list) {
 
 function itineraryHtml(center, list) {
   const order = visitOrder(center.loc, list.slice(0, 9));
+  S.personOrder = order.map((p, k) => ({ ...p, prev: k ? { name: order[k - 1].labelZh || order[k - 1].label, loc: order[k - 1].loc } : { name: center.name, loc: center.loc } }));
   const total = order.reduce((a, p) => a + p.hop, 0);
   const mode = total > 4000 ? 'driving' : 'walking';
   const last = order[order.length - 1];
@@ -1923,7 +1924,10 @@ function itineraryHtml(center, list) {
   });
   if (order.length > 1) q.set('waypoints', order.slice(0, -1).map((p) => `${p.loc.lat},${p.loc.lng}`).join('|'));
   return `<div class="card"><div class="detail"><h4>🗺️ 建議參訪順序（從${esc(center.name)}出發，照遠近排）</h4>
-    <ol class="steps">${order.map((p) => `<li><b>${esc(p.label)}</b><div class="sd">上一站過來約 ${fmtDist(p.hop)}${p.hop < 2500 ? `，步行約 ${walkGuess(p.hop)}` : ''}</div></li>`).join('')}</ol>
+    <ol class="steps">${S.personOrder.map((p, k) => `<li><b>${esc(p.labelZh || p.label)}</b>
+      <div class="sd">從「${esc(p.prev.name)}」過來約 ${fmtDist(p.hop)}${p.hop < 2500 ? `，步行約 ${walkGuess(p.hop)}` : ''}</div>
+      <button type="button" class="chip" data-leg="${k}" style="margin-top:4px">🚌 這段怎麼去 ›</button>
+      <div class="leg-box" id="leg-${k}"></div></li>`).join('')}</ol>
     <div class="small">全程直線距離約 ${fmtDist(total)}${total > 4000 ? '，距離較遠，建議搭車或開車' : '，走路就能逛完'}。</div>
     <div class="actions"><a class="go-btn" style="text-decoration:none" href="https://www.google.com/maps/dir/?${q}" target="_blank" rel="noopener">用 Google 地圖照這個順序走 ➜</a></div></div></div>`;
 }
@@ -2010,6 +2014,20 @@ async function personSearch() {
 $('#personForm')?.addEventListener('submit', (e) => { e.preventDefault(); personSearch(); });
 $('#personWhere')?.addEventListener('change', () => $('#personPlace').classList.toggle('hidden', $('#personWhere').value !== 'place'));
 $('#person-view')?.addEventListener('click', (e) => {
+  const leg = e.target.closest('[data-leg]');
+  if (leg) {
+    const p = S.personOrder[+leg.dataset.leg];
+    const box = $(`#leg-${leg.dataset.leg}`);
+    leg.remove();
+    // 1 公里內直接走路；遠一點就查大眾運輸（台灣含官方即時與出口，日本用 NAVITIME）
+    if (p.hop < 1000) {
+      const q = new URLSearchParams({ api: '1', origin: `${p.prev.loc.lat},${p.prev.loc.lng}`, destination: `${p.loc.lat},${p.loc.lng}`, travelmode: 'walking' });
+      box.innerHTML = `<div class="small">🚶 很近，走路約 ${walkGuess(p.hop)}。<a href="https://www.google.com/maps/dir/?${q}" target="_blank" rel="noopener">用 Google 地圖導航走過去</a></div>`;
+    } else {
+      planTrip({ name: p.labelZh || p.label, loc: p.loc }, { box, from: p.prev, max: 2 });
+    }
+    return;
+  }
   const go = e.target.closest('[data-pgo]');
   if (go) {
     const p = S.personList[+go.dataset.pgo];
