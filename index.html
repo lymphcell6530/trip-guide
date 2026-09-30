@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=22">
+  <link rel="stylesheet" href="style.css?v=29">
 </head>
 <body>
   <header class="topbar">
@@ -27,6 +27,7 @@
   </form>
 
   <div id="status" class="status">正在取得你的位置…</div>
+  <div id="placeRow" class="place-row hidden"></div>
 
   <main class="layout">
     <section class="map-wrap">
@@ -123,6 +124,15 @@
     </form>
   </dialog>
 
-  <script src="app.js?v=28"></script>
+  <dialog id="wikiReader" class="reader">
+    <div class="reader-head">
+      <button type="button" id="wrBack" class="icon-btn hidden" title="上一層">←</button>
+      <div id="wrCrumbs" class="crumbs"></div>
+      <button type="button" id="wrClose" class="icon-btn" title="關閉">✕</button>
+    </div>
+    <div id="wrBody" class="reader-body"></div>
+  </dialog>
+
+  <script src="app.js?v=29"></script>
 </body>
 </html>

@@ -200,6 +200,7 @@ async function search(label, arrived = false) {
   drawMarkers();
   // 用搜尋框查的地點，就顯示你輸入的名稱
   const place = label.startsWith('「') ? `${label.slice(1, -1)}附近` : ctx.name;
+  paintPlaceRow(ctx.parts, ctx.country === 'JP' ? 'ja' : 'zh');
   setStatus(`📍 ${place || label}：找到 ${S.sights.length} 個景點、${S.food.length} 家美食${S.manual ? '（手動選點，按 📍 回到 GPS）' : ''}`);
   if (arrived && S.notify) notify(`你到了${place || '新地點'}`, `附近有 ${S.sights.length} 個景點、${S.food.length} 家美食`);
   enrichTravel(searchId);
@@ -336,7 +337,7 @@ function guessCountry({ lat, lng }) {
   return null;
 }
 async function placeContext(pos) {
-  let name = null, country = null;
+  let name = null, country = null, parts = [];
   if (S.map) {
     try {
       const { Geocoder } = await google.maps.importLibrary('geocoding');
@@ -344,11 +345,22 @@ async function placeContext(pos) {
       const comps = results.flatMap((r) => r.address_components);
       const pick = (t) => comps.find((c) => c.types.includes(t))?.long_name;
       country = comps.find((c) => c.types.includes('country'))?.short_name || null;
-      name = [pick('administrative_area_level_1'), pick('administrative_area_level_2') || pick('locality'), pick('sublocality_level_1') || pick('administrative_area_level_3')]
-        .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' ');
+      const levels = [pick('administrative_area_level_1'), pick('administrative_area_level_2') || pick('locality'), pick('sublocality_level_1') || pick('administrative_area_level_3')]
+        .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+      name = levels.join(' ');
+      parts = levels.filter((v) => !/(里|村|鄰)$/.test(v)).map((v) => ({ name: v, label: v }));
+      // 日本：維基百科用日文地名查比較準
+      if (country === 'JP') {
+        const ja = await new Geocoder().geocode({ location: pos, language: 'ja' });
+        const jc = ja.results.flatMap((r) => r.address_components);
+        const jp = (t) => jc.find((c) => c.types.includes(t))?.long_name;
+        const jl = [jp('administrative_area_level_1'), jp('locality') || jp('administrative_area_level_2'), jp('sublocality_level_1') || jp('sublocality_level_2')]
+          .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+        parts = jl.map((v, i) => ({ name: v, label: levels[i] && levels[i] !== v ? `${levels[i]}` : v }));
+      }
     } catch (e) { console.warn('geocode', e); }
   }
-  return { name, country: country || guessCountry(pos) };
+  return { name, parts, country: country || guessCountry(pos) };
 }
 
 // ---------- 維基百科：歷史故事（中文優先，當地語言補充，必要時翻譯） ----------
@@ -512,10 +524,11 @@ async function toggleCard(uid) {
   detail.dataset.filled = '1';
   detail.innerHTML = '<div class="small">載入中…</div>';
 
-  let html = '';
+  let html = '', deep = '';
   if (item.kind === 'sights') {
     const story = await wikiStory(item).catch(() => null);
     html += '<h4>📜 歷史與故事</h4>';
+    deep = story ? `<div class="actions"><button type="button" class="ghost-btn" data-deep="${esc(story.lang)}|${esc(story.title)}">📖 深入閱讀：章節與相關條目 ›</button></div>` : '';
     if (!story) {
       html += `<div class="story">${esc(item.summary || '維基百科上還沒有這個地點的條目，可以看看下面的遊客評論。')}</div>`;
     } else {
@@ -538,6 +551,7 @@ async function toggleCard(uid) {
     const priceMentions = (item.reviews || []).map((r) => r.text.match(/[^。！!？?\n]*(\d[\d,]*\s*(?:元|円|日圓|日幣|塊)|(?:NT\$?|[¥￥$])\s*\d[\d,]*)[^。！!？?\n]*/)).filter(Boolean).map((m) => m[0].trim());
     if (priceMentions.length) html += `<div class="small">評論提到：${priceMentions.slice(0, 3).map(esc).join('；')}</div>`;
   }
+  html += deep;
   if (item.openNow) html += `<h4>🕒 今日營業</h4><div>${esc(item.openNow)}</div>`;
   if (item.address) html += `<h4>📫 地址</h4><div>${esc(item.address)}</div>`;
   if (item.reviews?.length) {
@@ -828,12 +842,13 @@ function optionCard(o, i, dest, from = { loc: S.origin }, country = S.country) {
         在「${esc(f.from)}」上車${f.dep ? `，<b>${hhmm(f.dep)}</b> 發車 <span class="count${cd.soon ? ' soon' : ''}" data-dep="${f.dep.getTime()}">${cd.text}</span>` : ''}
         ${o.leaveBy ? `<br>👉 最晚 <b>${hhmm(o.leaveBy)}</b> 要出發走去車站` : ''}
         ${o.later?.length ? `<br>⏭ 下一班：${o.later.slice(0, 4).map(hhmm).join('、')}` : ''}
-        ${country === 'TW' ? `<div class="tdx" data-tdx="${i}-${o.segs.indexOf(f)}"></div>` : ''}</div>`
+        ${country === 'TW' ? `<div class="tdx" data-tdx="${i}-${o.segs.indexOf(f)}"></div><div class="exit" data-exit="${i}-${o.segs.indexOf(f)}-in"></div>` : ''}
+        ${country === 'JP' && f.gateIn ? `<div class="sd gate">🚪 進站走 <b>${esc(f.gateIn)}</b></div>` : ''}</div>`
     : '<div class="next-bus">這段路走路就到了，不用搭車。</div>';
   const steps = o.segs.map((g, j) => (g.type === 'walk'
     ? `<li>🚶 走路 ${fmtDur(g.sec)}（${fmtDist(g.m)}）</li>`
     : `<li>${lineChip(g)} ${esc(g.from)} → ${esc(g.to)}${g.headsign ? `（往 ${esc(g.headsign)}）` : ''}
-        <div class="sd">${g.dep ? `${hhmm(g.dep)} 發車 · ` : ''}${g.arr ? `${hhmm(g.arr)} 到站 · ` : ''}${g.stops ? `坐 ${g.stops} 站 · ` : ''}${fmtDur(g.sec)}${g.agency ? ` · ${esc(g.agency)}` : ''}${g.fare ? ` · 💰 ${esc(g.fare)}` : ''}</div>${country === 'TW' ? `<div class="tdx sd" data-tdx="${i}-${j}"></div>` : ''}</li>`)).join('');
+        <div class="sd">${g.dep ? `${hhmm(g.dep)} 發車 · ` : ''}${g.arr ? `${hhmm(g.arr)} 到站 · ` : ''}${g.stops ? `坐 ${g.stops} 站 · ` : ''}${fmtDur(g.sec)}${g.agency ? ` · ${esc(g.agency)}` : ''}${g.fare ? ` · 💰 ${esc(g.fare)}` : ''}</div>${country === 'TW' ? `<div class="tdx sd" data-tdx="${i}-${j}"></div><div class="exit sd" data-exit="${i}-${j}-in"></div><div class="exit sd" data-exit="${i}-${j}-out"></div>` : jpGateHtml(g)}</li>`)).join('');
   const q = new URLSearchParams({ api: '1', origin: `${from.loc.lat},${from.loc.lng}`, destination: `${dest.loc.lat},${dest.loc.lng}`, travelmode: 'transit' });
   return `<article class="card"><div class="opt-head" data-opt="${i}">
       <div class="opt-top"><span class="dur">${fmtDur(o.sec)}${i === 0 ? '<span class="best">推薦</span>' : ''}</span>
@@ -915,6 +930,9 @@ async function japanOptions(from, dest) {
         from: pname(secs[k - 1]), to: pname(secs[k + 1]),
         dep: s.from_time ? new Date(s.from_time) : null, arr: s.to_time ? new Date(s.to_time) : null,
         headsign: t.links?.[t.links.length - 1]?.destination?.name || '', stops: null, sec: (s.time || 0) * 60, fare: yen(t.fare),
+        gateIn: secs[k - 1]?.gateway || '', gateOut: secs[k + 1]?.gateway || '', getoff: t.getoff || '',
+        fromLoc: secs[k - 1]?.coord ? { lat: secs[k - 1].coord.lat, lng: secs[k - 1].coord.lon } : null,
+        toLoc: secs[k + 1]?.coord ? { lat: secs[k + 1].coord.lat, lng: secs[k + 1].coord.lon } : null,
       });
     });
     const m = it.summary?.move || {};
@@ -989,7 +1007,8 @@ async function planTrip(dest, opt = {}) {
     box.goOpts = opts;
     if (top) S.goOpts = opts;
     showOptionOnMap(0, box);
-    if (cFrom === 'TW') tdxEnrich(opts, box);
+    opts.forEach((o) => { o.origin = from.loc; o.target = dest.loc; });
+    if (cFrom === 'TW') tdxEnrich(opts, box).then(() => exitEnrich(opts, box));
   } catch (e) {
     console.warn(e);
     box.innerHTML = `<div class="empty">查詢失敗：${esc(e.message)}</div>`;
@@ -1506,6 +1525,246 @@ async function tdxEnrich(opts, root = document) {
     }
   }));
 }
+
+// ---------- 車站出入口：台灣用 TDX 出口座標算「離你最近／離下一站最近」的出口 ----------
+const METRO_BY_CITY = {
+  Taipei: ['TRTC', 'NTDLRT', 'NTALRT'], NewTaipei: ['TRTC', 'NTDLRT', 'NTALRT'], Taoyuan: ['TYMC', 'TRTC'],
+  Taichung: ['TMRT'], Kaohsiung: ['KRTC', 'KLRT'],
+};
+const exitRow = (st, e, extra = {}) => ({
+  station: st.StationName?.Zh_tw || '', name: e.ExitName?.Zh_tw || e.ExitID || '',
+  loc: { lat: e.ExitPosition?.PositionLat, lng: e.ExitPosition?.PositionLon },
+  desc: e.LocationDescription || '', elevator: !!e.Elevator,
+  map: (e.ExitMapURLs || st.ExitMapURLs || [])[0]?.MapURL || '', ...extra,
+});
+const arrOf = (d) => (Array.isArray(d) ? d : (d?.StationExits || Object.values(d || {}).find(Array.isArray) || []));
+
+async function exitsFor(kind, loc) {
+  if (kind === 'THSR') return arrOf(await tdxGet('/v2/Rail/THSR/StationExit', {}, 864e5)).map((e) => exitRow(e, e));
+  if (kind === 'TRA') {
+    return arrOf(await tdxGet('/v3/Rail/TRA/StationExit', {}, 864e5))
+      .flatMap((st) => (st.Exits ? st.Exits.map((e) => exitRow(st, e)) : [exitRow(st, st)]));
+  }
+  const city = await cityCodeAt(loc);
+  const all = [];
+  for (const op of METRO_BY_CITY[city] || []) {
+    try { all.push(...arrOf(await tdxGet(`/v2/Rail/Metro/StationExit/${op}`, {}, 864e5)).map((e) => exitRow(e, e))); } catch (e) { console.warn('exit', op, e); }
+  }
+  return all;
+}
+
+// 在「這一站」的出口裡，挑離 target 最近的一個
+function pickExit(exits, stopLoc, stopName, target) {
+  const near = exits.filter((e) => e.loc.lat && distM(e.loc, stopLoc) < 700);
+  if (!near.length) return null;
+  const byName = near.filter((e) => normStop(e.station) && (normStop(stopName).includes(normStop(e.station)) || normStop(e.station).includes(normStop(stopName))));
+  const pool = byName.length ? byName : near;
+  const anchor = pool.reduce((a, b) => (distM(a.loc, stopLoc) < distM(b.loc, stopLoc) ? a : b));
+  const same = pool.filter((e) => e.station === anchor.station);
+  const best = same.reduce((a, b) => (distM(a.loc, target) < distM(b.loc, target) ? a : b));
+  return { ...best, dist: distM(best.loc, target), total: same.length };
+}
+
+function railKind(g) {
+  const a = `${g.agency} ${g.lineName} ${g.vehicle} ${g.line}`;
+  if (/SUBWAY|METRO|LIGHT_RAIL|MONORAIL/.test(g.vtype) || /捷運|Metro|MRT|輕軌/i.test(a)) return 'METRO';
+  const k = segKind(g);
+  return k === 'TRA' || k === 'THSR' ? k : null;
+}
+
+function exitHtml(dir, ex, targetName) {
+  if (!ex) return '';
+  const where = ex.desc ? `（${esc(ex.desc)}）` : '';
+  const walk = dir === 'out' && ex.dist < 5000 ? `，出站後步行約 ${walkGuess(ex.dist)}` : '';
+  return `🚪 ${dir === 'in' ? '進站' : '出站'}走 <b>${esc(ex.name)}</b>${where}${dir === 'out' ? `，離${esc(targetName)}最近${walk}` : '，離你最近'}`
+    + `${ex.elevator ? ' · ♿ 有電梯' : ''}${ex.total > 1 ? ` · 這站共 ${ex.total} 個出口` : ''}`
+    + `${ex.map ? ` · <a href="${esc(ex.map)}" target="_blank" rel="noopener">車站平面圖</a>` : ''}`;
+}
+
+async function exitEnrich(opts, root) {
+  if (!tdxReady()) return;
+  const cache = new Map();
+  const load = (kind, loc) => {
+    const k = kind === 'METRO' ? `M:${loc.lat.toFixed(2)},${loc.lng.toFixed(2)}` : kind;
+    if (!cache.has(k)) cache.set(k, exitsFor(kind, loc).catch(() => []));
+    return cache.get(k);
+  };
+  const fill = (key, html) => root.querySelectorAll(`[data-exit="${key}"]`).forEach((c) => { if (html) c.innerHTML = html; });
+  const jobs = [];
+  opts.forEach((o, i) => {
+    const tr = o.segs.map((g, j) => ({ g, j })).filter((x) => x.g.type === 'transit');
+    tr.forEach(({ g, j }, n) => {
+      const kind = railKind(g);
+      if (!kind || !g.fromLoc || !g.toLoc) return;
+      const prev = tr[n - 1]?.g, next = tr[n + 1]?.g;
+      // 進站：第一段，或前一段在別的地方下車（不是站內轉乘）
+      const inFrom = prev ? prev.toLoc : o.origin;
+      if (inFrom && (!prev || !prev.toLoc || distM(prev.toLoc, g.fromLoc) > 150)) {
+        jobs.push(load(kind, g.fromLoc).then((ex) => fill(`${i}-${j}-in`, exitHtml('in', pickExit(ex, g.fromLoc, g.from, inFrom)))));
+      }
+      // 出站：最後一段，或下一段要走到別的地方搭車
+      const outTo = next ? next.fromLoc : o.target;
+      const outName = next ? `「${next.from}」` : '目的地';
+      if (outTo && (!next || !next.fromLoc || distM(next.fromLoc, g.toLoc) > 150)) {
+        jobs.push(load(kind, g.toLoc).then((ex) => fill(`${i}-${j}-out`, exitHtml('out', pickExit(ex, g.toLoc, g.to, outTo), outName))));
+      }
+    });
+  });
+  await Promise.all(jobs);
+}
+
+// 日本（NAVITIME）：出口名稱、建議車廂
+const GETOFF = { 前: '前段車廂', 中: '中段車廂', 後: '後段車廂' };
+function jpGateHtml(g) {
+  const bits = [];
+  if (g.gateIn) bits.push(`🚪 進站走 <b>${esc(g.gateIn)}</b>`);
+  if (g.getoff) bits.push(`🚃 下車最方便：<b>${esc(GETOFF[g.getoff] || `第 ${g.getoff} 節車廂`)}</b>`);
+  if (g.gateOut) bits.push(`🚪 出站走 <b>${esc(g.gateOut)}</b>`);
+  return bits.length ? `<div class="sd gate">${bits.join('<br>')}</div>` : '';
+}
+
+// ---------- 深入閱讀：維基百科章節、相關條目，一層一層往下看 ----------
+const WR = { stack: [] };
+const SKIP_SEC = /(參考|参考|參見|参见|参照|関連項目|外部|注釋|注释|註釋|脚注|延伸閱讀|文獻|文献|資料來源|出典|相關條目|相关条目|圖集|画像|ギャラリー|交通|アクセス)/;
+const PLACE_FOCUS = /(地名|名稱|名称|由來|由来|語源|沿革|歷史|历史|歴史)/;
+
+async function translateMany(list, from) {
+  if (!S.key || !list.length) return null;
+  try {
+    const r = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${encodeURIComponent(S.key)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: list, source: from, target: 'zh-TW', format: 'text' }),
+    });
+    if (!r.ok) return null;
+    return (await r.json()).data?.translations?.map((t) => t.translatedText) || null;
+  } catch { return null; }
+}
+
+async function wikiSection(title, lang, index) {
+  const d = await wikiApi({ action: 'parse', page: title, prop: 'text', section: String(index), redirects: '1', disableeditsection: '1', disabletoc: '1' }, lang);
+  const html = d.parse?.text?.['*'] || '';
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('sup, style, table, .mw-editsection, .reference, .navbox, .hatnote, .thumb, figure, .mw-empty-elt, .noprint, .infobox, h2, h3, h4').forEach((e) => e.remove());
+  const links = [];
+  doc.querySelectorAll('a[href]').forEach((a) => {
+    const m = a.getAttribute('href').match(/^\/(?:wiki|zh-[a-z]+)\/([^#?]+)/);
+    if (!m) return;
+    const t = decodeURIComponent(m[1]).replace(/_/g, ' ');
+    if (!t.includes(':') && !links.includes(t) && t !== title) links.push(t);
+  });
+  const text = [...doc.querySelectorAll('p, li, dd')].map((p) => p.textContent.replace(/\s+/g, ' ').trim()).filter((t) => t.length > 1).join('\n');
+  return { text, links: links.slice(0, 24) };
+}
+
+async function openWiki(title, lang = 'zh', opt = {}) {
+  const dlg = $('#wikiReader');
+  if (!dlg.open) { WR.stack = []; dlg.showModal(); }
+  WR.stack.push({ title, lang, focus: opt.focus });
+  await renderWiki();
+}
+
+async function renderWiki() {
+  const cur = WR.stack[WR.stack.length - 1];
+  const body = $('#wrBody');
+  $('#wrBack').classList.toggle('hidden', WR.stack.length < 2);
+  $('#wrCrumbs').innerHTML = WR.stack.map((s, k) => `<span${k === WR.stack.length - 1 ? ' class="cur"' : ''}>${esc(s.label || s.title)}</span>`).join(' › ');
+  body.innerHTML = '<div class="empty">載入中…</div>';
+  body.scrollTop = 0;
+  try {
+    const d = await wikiApi({ action: 'parse', page: cur.title, prop: 'sections|displaytitle', redirects: '1' }, cur.lang);
+    if (!d.parse) throw new Error('找不到這個條目');
+    const realTitle = d.parse.title;
+    cur.title = realTitle;
+    const secs = (d.parse.sections || []).filter((s) => s.toclevel <= 2 && !SKIP_SEC.test(s.line));
+    const intro = await wikiSection(realTitle, cur.lang, 0);
+    let introText = intro.text, heads = secs.map((s) => s.line.replace(/<[^>]+>/g, ''));
+    let label = realTitle;
+    if (cur.lang !== 'zh') {
+      const tr = await translateMany([introText.slice(0, 1500), realTitle, ...heads], cur.lang);
+      if (tr) { introText = tr[0]; label = `${tr[1]}（${realTitle}）`; heads = tr.slice(2); }
+    }
+    cur.label = label.length > 16 ? realTitle : label;
+    $('#wrCrumbs').innerHTML = WR.stack.map((s, k) => `<span${k === WR.stack.length - 1 ? ' class="cur"' : ''}>${esc(s.label || s.title)}</span>`).join(' › ');
+    const url = wikiPageUrl(cur.lang, realTitle);
+    body.innerHTML = `<h2>${esc(label)}</h2>
+      <div class="story">${esc(introText.length > 900 ? `${introText.slice(0, 900)}…` : introText)}</div>
+      ${linkChips(intro.links, cur.lang)}
+      ${secs.length ? '<h4>📚 章節（點開來看）</h4>' : ''}
+      ${secs.map((s, k) => `<details class="wr-sec" data-sec="${s.index}"><summary>${esc(heads[k])}</summary><div class="wr-sec-body small">載入中…</div></details>`).join('')}
+      <div class="small" style="margin:12px 0">資料來源：<a href="${esc(url)}" target="_blank" rel="noopener">${cur.lang === 'zh' ? '' : esc(LANG_NAME[cur.lang] || cur.lang)}維基百科「${esc(realTitle)}」</a>${cur.lang !== 'zh' ? '（Google 自動翻譯）' : ''}</div>`;
+    // 地名由來：自動打開「地名／由來／歷史」那一章
+    if (cur.focus) {
+      const k = secs.findIndex((s, n) => cur.focus.test(s.line) || cur.focus.test(heads[n]));
+      const el = k >= 0 ? body.querySelectorAll('.wr-sec')[k] : null;
+      if (el) { el.open = true; loadSec(el); setTimeout(() => el.scrollIntoView({ block: 'start' }), 50); }
+    }
+  } catch (e) {
+    body.innerHTML = `<div class="empty">這個條目讀不到（${esc(e.message)}）</div>`;
+  }
+}
+
+function linkChips(links, lang) {
+  if (!links?.length) return '';
+  return `<div class="wr-links"><span class="small">🔗 相關條目：</span>${links.map((t) => `<button type="button" class="chip" data-wiki="${esc(t)}" data-lang="${lang}">${esc(t)}</button>`).join('')}</div>`;
+}
+
+async function loadSec(el) {
+  if (el.dataset.loaded) return;
+  el.dataset.loaded = '1';
+  const cur = WR.stack[WR.stack.length - 1];
+  const box = el.querySelector('.wr-sec-body');
+  try {
+    const s = await wikiSection(cur.title, cur.lang, el.dataset.sec);
+    let text = s.text || '（這一章沒有文字內容）';
+    if (cur.lang !== 'zh') { const tr = await translateMany([text.slice(0, 3000)], cur.lang); if (tr) text = tr[0]; }
+    box.classList.remove('small');
+    box.innerHTML = `<div class="story">${esc(text.length > 3000 ? `${text.slice(0, 3000)}…` : text)}</div>${linkChips(s.links, cur.lang)}`;
+  } catch (e) {
+    box.textContent = `讀取失敗：${e.message}`;
+  }
+}
+
+$('#wikiReader')?.addEventListener('toggle', (e) => { const d = e.target.closest('details.wr-sec'); if (d?.open) loadSec(d); }, true);
+$('#wikiReader')?.addEventListener('click', (e) => {
+  const chip = e.target.closest('[data-wiki]');
+  if (chip) { openWiki(chip.dataset.wiki, chip.dataset.lang); return; }
+  if (e.target.closest('#wrBack')) { WR.stack.pop(); renderWiki(); return; }
+  if (e.target.closest('#wrClose')) $('#wikiReader').close();
+});
+
+// ---------- 地名由來：目前位置的「縣市 › 區 › 里／町」 ----------
+async function resolveWikiTitle(name, parent, lang) {
+  const s = await wikiApi({ action: 'query', list: 'search', srsearch: `${name} ${parent || ''}`.trim(), srlimit: '8', srnamespace: '0' }, lang);
+  const hits = (s.query?.search || []).map((r) => r.title);
+  const n = norm(name);
+  return hits.find((t) => norm(t) === n) || hits.find((t) => norm(t).startsWith(n)) || hits.find((t) => nameMatch(name, t)) || name;
+}
+
+function paintPlaceRow(parts, lang) {
+  const row = $('#placeRow');
+  if (!row) return;
+  if (!parts?.length) { row.classList.add('hidden'); return; }
+  S.placeParts = parts;
+  row.classList.remove('hidden');
+  row.innerHTML = `<span>📜 地名由來：</span>${parts.map((p, k) => `<button type="button" class="chip" data-placepart="${k}">${esc(p.label)}</button>`).join('<span class="arrow">›</span>')}`;
+  row.dataset.lang = lang;
+}
+$('#placeRow')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-placepart]');
+  if (!b) return;
+  const k = +b.dataset.placepart, p = S.placeParts[k], lang = $('#placeRow').dataset.lang;
+  b.disabled = true;
+  const title = await resolveWikiTitle(p.name, S.placeParts[k - 1]?.name, lang).catch(() => p.name);
+  b.disabled = false;
+  openWiki(title, lang, { focus: PLACE_FOCUS });
+});
+
+document.addEventListener('click', (e) => {
+  const d = e.target.closest('[data-deep]');
+  if (!d) return;
+  const [lang, ...t] = d.dataset.deep.split('|');
+  openWiki(t.join('|'), lang, { focus: /(歷史|历史|歴史|沿革|由來|由来)/ });
+});
 
 // ---------- 通知 ----------
 function notify(title, body) {

@@ -149,5 +149,23 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .abroad select, .abroad input[type=date] { width: 100%; font: inherit; }
 .abroad #abLeg1, .abroad #abLeg3, .abroad #abFlightList { margin-top: 6px; }
 .flights li { font-size: 14px; }
+.place-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 16px; font-size: 13px; color: var(--muted); background: var(--card); border-bottom: 1px solid var(--line); }
+.place-row .chip { font-size: 13px; padding: 3px 10px; }
+.place-row .arrow { color: var(--muted); }
+.exit:empty, .gate:empty { display: none; }
+.exit, .gate { margin-top: 4px; font-size: 13px; line-height: 1.6; }
+.reader { width: min(720px, 100vw); max-width: 100vw; height: min(92vh, 100dvh); max-height: 100dvh; padding: 0; }
+.reader[open] { display: flex; flex-direction: column; }
+.reader-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--accent); color: #fff; }
+.reader-head .icon-btn { color: #fff; flex: none; }
+.crumbs { flex: 1; min-width: 0; font-size: 13px; overflow-x: auto; white-space: nowrap; }
+.crumbs .cur { font-weight: 700; }
+.reader-body { flex: 1; overflow-y: auto; padding: 12px 16px 24px; line-height: 1.7; }
+.reader-body h2 { font-size: 20px; margin: 4px 0 8px; }
+.wr-sec { border: 1px solid var(--line); border-radius: 10px; margin: 8px 0; background: var(--bg); }
+.wr-sec summary { padding: 10px 12px; cursor: pointer; font-weight: 600; }
+.wr-sec-body { padding: 0 12px 12px; }
+.wr-links { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
+.wr-links .chip { font-size: 13px; padding: 3px 10px; }
 .best { display: inline-block; font-size: 11px; font-weight: 700; background: var(--accent); color: var(--on-accent); border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }
 .tab { font-size: 14px; }
