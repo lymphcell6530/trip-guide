@@ -356,7 +356,8 @@ async function placeContext(pos) {
         const jp = (t) => jc.find((c) => c.types.includes(t))?.long_name;
         const jl = [jp('administrative_area_level_1'), jp('locality') || jp('administrative_area_level_2'), jp('sublocality_level_1') || jp('sublocality_level_2')]
           .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
-        parts = jl.map((v, i) => ({ name: v, label: levels[i] && levels[i] !== v ? `${levels[i]}` : v }));
+        parts = jl.map((v) => ({ name: v, label: v }));
+        if (jl.length) name = jl.join(' ');
       }
     } catch (e) { console.warn('geocode', e); }
   }
@@ -1650,6 +1651,8 @@ async function wikiSection(title, lang, index) {
     const m = a.getAttribute('href').match(/^\/(?:wiki|zh-[a-z]+)\/([^#?]+)/);
     if (!m) return;
     const t = decodeURIComponent(m[1]).replace(/_/g, ' ');
+    // 年份、年號、日期這類條目點了沒意義，略過
+    if (/^(\d+年|\d+月\d+日|\d+世紀|前?\d+年代|昭和|平成|令和|明治|大正|民國|民国)$/.test(t)) return;
     if (!t.includes(':') && !links.includes(t) && t !== title) links.push(t);
   });
   const text = [...doc.querySelectorAll('p, li, dd')].map((p) => p.textContent.replace(/\s+/g, ' ').trim()).filter((t) => t.length > 1 && !/^[\^↑]/.test(t)).join('\n');
