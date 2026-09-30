@@ -2317,8 +2317,8 @@ async function buildPdf(btn) {
     const worker = html2pdf().set({
       margin: 0, filename: file,
       image: { type: 'jpeg', quality: 0.9 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: 794 },
-      jsPDF: { unit: 'px', format: [794, 1123], orientation: 'portrait', hotfixes: ['px_scaling'] },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', width: 794, windowWidth: 794, scrollX: 0, scrollY: 0, x: 0 },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
       pagebreak: { mode: ['css'], after: '.pdf-page' },
     }).from(box);
     if (btn.dataset.test) { S.pdfBlob = await worker.outputPdf('blob'); } else { await worker.save(); }
