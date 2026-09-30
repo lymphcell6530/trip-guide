@@ -1913,29 +1913,112 @@ function visitOrder(center, list) {
   return order;
 }
 
-function itineraryHtml(center, list) {
-  const order = visitOrder(center.loc, list.slice(0, 9));
+// 參訪行程：可以刪掉不想去的點；每段自動查怎麼去、要多久，推算每站幾點到
+const STAY_MIN = 30; // 每站預留參觀時間（分鐘）
+S.personSkip = new Set();
+S.legCache = new Map();
+
+function itineraryHtml() {
+  return '<div class="card" id="personPlan"></div>';
+}
+
+async function legSummary(p) {
+  const key = `${p.prev.loc.lat.toFixed(5)},${p.prev.loc.lng.toFixed(5)}>${p.loc.lat.toFixed(5)},${p.loc.lng.toFixed(5)}`;
+  if (S.legCache.has(key)) return S.legCache.get(key);
+  const job = (async () => {
+    const walkSec = (p.hop * 1.3) / 1.25;
+    if (p.hop < 1000) return { html: `🚶 走路約 <b>${fmtDur(walkSec)}</b>（${fmtDist(p.hop * 1.3)}）`, sec: walkSec };
+    const c = guessCountry(p.prev.loc) || S.country;
+    const dest = { name: p.labelZh || p.label, loc: p.loc };
+    let opts = [];
+    try {
+      if (c === 'JP') {
+        if (!S.rapidKey) return { html: '🚌 設定 NAVITIME 金鑰後，這裡會顯示搭什麼車', sec: p.hop / 6 };
+        opts = await japanOptions(p.prev, dest);
+      } else if (S.map) {
+        opts = await transitOptions(dest, p.prev);
+      }
+    } catch (e) { console.warn('leg', e); }
+    const o = groupOptions(opts)[0];
+    if (!o) {
+      if (p.hop < 2500) return { html: `🚶 走路約 <b>${fmtDur(walkSec)}</b>`, sec: walkSec };
+      return { html: `🚕 查不到大眾運輸，建議搭計程車（約 ${fmtDist(p.hop * 1.3)}）`, sec: (p.hop * 1.3) / 8 };
+    }
+    const chain = o.segs.map((g) => (g.type === 'walk' ? `🚶${Math.max(1, Math.round(g.sec / 60))}分` : `${g.icon}${esc(g.line || g.vehicle)}`)).join(' › ');
+    const ride = o.first?.arr && o.leaveBy ? Math.round((o.arrive - o.leaveBy) / 1000) : o.sec;
+    return { html: `${chain}<br>約 <b>${fmtDur(ride)}</b>${o.fare ? ` · 💰 ${esc(o.fare)}` : ''}`, sec: ride };
+  })();
+  S.legCache.set(key, job);
+  return job;
+}
+
+async function renderPlan() {
+  const box = $('#personPlan');
+  const center = S.personCenterNow;
+  if (!box || !center) return;
+  const kept = S.personList.filter((p) => !S.personSkip.has(p.title));
+  const skipped = S.personList.filter((p) => S.personSkip.has(p.title));
+  (S.personMarkers || []).forEach((m, k) => { m.map = S.personSkip.has(S.personList[k]?.title) ? null : S.map; });
+  if (!kept.length) {
+    box.innerHTML = `<div class="detail"><h4>🗺️ 參訪路線</h4><div class="small">全部都刪掉了。</div>${restoreHtml(skipped)}</div>`;
+    return;
+  }
+  const order = visitOrder(center.loc, kept.slice(0, 9));
   S.personOrder = order.map((p, k) => ({ ...p, prev: k ? { name: order[k - 1].labelZh || order[k - 1].label, loc: order[k - 1].loc } : { name: center.name, loc: center.loc } }));
-  const total = order.reduce((a, p) => a + p.hop, 0);
-  const mode = total > 4000 ? 'driving' : 'walking';
   const last = order[order.length - 1];
-  const q = new URLSearchParams({
-    api: '1', origin: `${center.loc.lat},${center.loc.lng}`, destination: `${last.loc.lat},${last.loc.lng}`, travelmode: mode,
-  });
+  const total = order.reduce((a, p) => a + p.hop, 0);
+  const q = new URLSearchParams({ api: '1', origin: `${center.loc.lat},${center.loc.lng}`, destination: `${last.loc.lat},${last.loc.lng}`, travelmode: total > 4000 ? 'driving' : 'walking' });
   if (order.length > 1) q.set('waypoints', order.slice(0, -1).map((p) => `${p.loc.lat},${p.loc.lng}`).join('|'));
-  return `<div class="card"><div class="detail"><h4>🗺️ 建議參訪順序（從${esc(center.name)}出發，照遠近排）</h4>
-    <ol class="steps">${S.personOrder.map((p, k) => `<li><b>${esc(p.labelZh || p.label)}</b>
-      <div class="sd">從「${esc(p.prev.name)}」過來約 ${fmtDist(p.hop)}${p.hop < 2500 ? `，步行約 ${walkGuess(p.hop)}` : ''}</div>
-      <button type="button" class="chip" data-leg="${k}" style="margin-top:4px">🚌 這段怎麼去 ›</button>
+  box.innerHTML = `<div class="detail"><h4>🗺️ 參訪路線（從${esc(center.name)}出發，照遠近排）</h4>
+    <div class="small">不想去的點按「✕ 不去」，會自動重新排順序。每站預留 ${STAY_MIN} 分鐘參觀。</div>
+    <ol class="steps plan">${S.personOrder.map((p, k) => `<li>
+      <div class="leg-line" id="legsum-${k}"><span class="small">🚏 從「${esc(p.prev.name)}」過去… 計算中</span></div>
+      <div class="plan-stop"><b>${k + 1}. ${esc(p.labelZh || p.label)}</b> <span class="small" id="eta-${k}"></span>
+        <button type="button" class="chip skip-btn" data-skip="${esc(p.title)}">✕ 不去</button></div>
+      <button type="button" class="chip" data-leg="${k}" style="margin-top:4px">這段的詳細搭法 ›</button>
       <div class="leg-box" id="leg-${k}"></div></li>`).join('')}</ol>
-    <div class="small">全程直線距離約 ${fmtDist(total)}${total > 4000 ? '，距離較遠，建議搭車或開車' : '，走路就能逛完'}。</div>
-    <div class="actions"><a class="go-btn" style="text-decoration:none" href="https://www.google.com/maps/dir/?${q}" target="_blank" rel="noopener">用 Google 地圖照這個順序走 ➜</a></div></div></div>`;
+    <div id="planTotal" class="plan-total small">計算全程時間…</div>
+    <div class="actions"><a class="go-btn" style="text-decoration:none" href="https://www.google.com/maps/dir/?${q}" target="_blank" rel="noopener">用 Google 地圖照這個順序走 ➜</a></div>
+    ${restoreHtml(skipped)}</div>`;
+  // 每段怎麼去（同時查），再依序推算抵達時間
+  const legs = await Promise.all(S.personOrder.map((p) => legSummary(p)));
+  if (!$('#personPlan')?.contains($('#legsum-0'))) return;
+  let t = Date.now(), move = 0;
+  legs.forEach((l, k) => {
+    const el = $(`#legsum-${k}`), eta = $(`#eta-${k}`);
+    if (el) el.innerHTML = `<span class="small">🚏 從「${esc(S.personOrder[k].prev.name)}」：</span>${l.html}`;
+    t += l.sec * 1000; move += l.sec;
+    if (eta) eta.textContent = `約 ${hhmm(new Date(t))} 到`;
+    t += STAY_MIN * 60000;
+  });
+  const all = (t - Date.now()) / 1000;
+  $('#planTotal').innerHTML = `⏱ 交通共約 <b>${fmtDur(move)}</b>，加上參觀時間，全程約 <b>${fmtDur(all)}</b>（現在出發，約 ${hhmm(new Date(t))} 逛完）。<br>時間是估算的，實際出發時可以按「這段的詳細搭法」看最新班次。`;
+}
+
+function restoreHtml(skipped) {
+  if (!skipped.length) return '';
+  return `<div class="small" style="margin-top:10px">已刪掉：${skipped.map((p) => `<button type="button" class="chip" data-unskip="${esc(p.title)}">↩ ${esc(p.labelZh || p.label)}</button>`).join(' ')}</div>`;
+}
+
+function toggleSkip(title) {
+  if (S.personSkip.has(title)) S.personSkip.delete(title); else S.personSkip.add(title);
+  const k = S.personList.findIndex((p) => p.title === title);
+  const card = $(`#pp-${k}`);
+  if (card) {
+    card.classList.toggle('skipped', S.personSkip.has(title));
+    const b = card.querySelector('[data-skip],[data-unskip]');
+    if (b) b.outerHTML = S.personSkip.has(title)
+      ? `<button type="button" class="ghost-btn" data-unskip="${esc(title)}">↩ 加回行程</button>`
+      : `<button type="button" class="ghost-btn" data-skip="${esc(title)}">✕ 不去</button>`;
+  }
+  renderPlan();
 }
 
 async function personSearch() {
   const typed = $('#personQuery').value.trim();
   const box = $('#personResults');
   if (!typed) return;
+  S.personSkip = new Set();
   $('#personQuery').blur();
   if ($('#personWhere').value === 'place') {
     const q = $('#personPlace').value.trim();
@@ -2002,9 +2085,11 @@ async function personSearch() {
               <button type="button" class="go-btn" data-pgo="${k}">帶我去 ➜</button>
               <button type="button" class="ghost-btn" data-deep="${esc(p.lang)}|${esc(p.title)}">📖 深入閱讀</button>
               <button type="button" class="ghost-btn" data-pmap="${k}">在地圖上看</button>
+              <button type="button" class="ghost-btn" data-skip="${esc(p.title)}">✕ 不去</button>
             </div></div></article>`).join('')}
-      ${itineraryHtml(center, list)}
+      ${itineraryHtml()}
       <div class="small" style="padding:8px 4px">資料來源：維基百科。故事是從條目裡「提到這個人」的句子整理出來的，想看完整內容可以按「深入閱讀」。</div>`;
+    renderPlan();
   } catch (e) {
     console.warn(e);
     box.innerHTML = `<div class="empty">查詢失敗：${esc(e.message)}</div>`;
@@ -2014,6 +2099,8 @@ async function personSearch() {
 $('#personForm')?.addEventListener('submit', (e) => { e.preventDefault(); personSearch(); });
 $('#personWhere')?.addEventListener('change', () => $('#personPlace').classList.toggle('hidden', $('#personWhere').value !== 'place'));
 $('#person-view')?.addEventListener('click', (e) => {
+  const sk = e.target.closest('[data-skip],[data-unskip]');
+  if (sk) { toggleSkip(sk.dataset.skip || sk.dataset.unskip); return; }
   const leg = e.target.closest('[data-leg]');
   if (leg) {
     const p = S.personOrder[+leg.dataset.leg];
