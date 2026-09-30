@@ -1126,7 +1126,7 @@ async function loadAbroadFlights(pickBest) {
       <ol class="steps flights">${list.map((r) => {
         const al = String(r.FlightNumber).slice(0, 2);
         return `<li><b>${esc(r.DepartureTime)}</b> 起飛 → <b>${esc(r.ArrivalTime)}</b> 抵達　${esc(AIRLINE_ZH[r.AirlineID] || AIRLINE_ZH[al] || r.AirlineID)} ${esc(r.FlightNumber)}
-          ${r.CodeShare?.length ? `<div class="sd">共用班號：${r.CodeShare.map((c) => esc(c.FlightNumber || c)).join('、')}</div>` : ''}
+          ${r.CodeShare?.length ? `<div class="sd">共用班號：${r.CodeShare.map((c) => esc(typeof c === 'string' ? c : `${AIRLINE_ZH[c.AirlineID] || c.AirlineID || ''} ${String(c.FlightNumber || '').startsWith(c.AirlineID || '#') ? c.FlightNumber : `${c.AirlineID || ''}${c.FlightNumber || ''}`}`)).join('、')}</div>` : ''}
           ${fidsText(live.get(flightNo(r.FlightNumber)), outbound)}</li>`;
       }).join('')}</ol>
       <div class="small">票價要到航空公司或下方的比價網站查。</div>`;

@@ -1,5 +1,5 @@
 // 只快取 App 外殼，地圖與搜尋資料一律走網路
-const CACHE = 'trip-guide-v22';
+const CACHE = 'trip-guide-v23';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', (e) => {
