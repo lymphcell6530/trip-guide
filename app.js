@@ -2084,7 +2084,9 @@ async function personSearch() {
       if (!person) continue;
       let intro = person.intro;
       if (person.lang !== 'zh') { const tr = await translateMany([intro], person.lang); if (tr) intro = tr[0]; }
-      const name = person.lang === 'zh' ? stripParen(person.show) : stripParen(person.title);
+      // 找到的條目名稱跟輸入的不一樣（例如「和樣」→「日本佛教建築」），就顯示你輸入的
+      const found0 = person.lang === 'zh' ? stripParen(person.show) : stripParen(person.title);
+      const name = nameMatch(found0, names[i]) || nameMatch(toShinjitai(found0), toShinjitai(names[i])) ? found0 : names[i];
       persons.push({
         ...person, typed: names[i], name, introZh: intro,
         aliases: [...new Set([names[i], toShinjitai(names[i]), name, stripParen(person.zh), stripParen(person.ja)].filter((a) => a && a.length >= 2))],
