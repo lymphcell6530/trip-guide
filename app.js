@@ -2303,10 +2303,14 @@ async function buildPdf(btn) {
             <div class="pdf-meta">${p.year ? `🏛 約 ${p.year} 年　` : ''}📏 距出發地 ${fmtDist(p.dist)}${p.who?.length ? `　👤 ${esc(p.who.join('、'))}` : ''}</div>
             <p>${esc((p.why || '（條目沒有直接寫到，詳細內容請看維基百科）').slice(0, 330))}${(p.why || '').length > 330 ? '…' : ''}</p></div></div>`).join('')}`, pages.length + 1));
     }
+    // 放在畫面外的容器裡排版；交給 PDF 工具的是裡面那層（它會複製一份來拍）
+    const hold = document.createElement('div');
+    hold.className = 'pdf-hold';
     const box = document.createElement('div');
     box.className = 'pdf-root';
     box.innerHTML = pages.join('');
-    document.body.appendChild(box);
+    hold.appendChild(box);
+    document.body.appendChild(hold);
     // 等圖片載完
     await Promise.all([...box.querySelectorAll('img')].map((im) => (im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; }))));
     const file = `${center.name ? `${center.name}_` : ''}${title}_行程.pdf`.replace(/[\\/:*?"<>|\s]+/g, '_');
@@ -2318,11 +2322,12 @@ async function buildPdf(btn) {
       pagebreak: { mode: ['css'], after: '.pdf-page' },
     }).from(box);
     if (btn.dataset.test) { S.pdfBlob = await worker.outputPdf('blob'); } else { await worker.save(); }
-    box.remove();
+    hold.remove();
     btn.textContent = '✅ 已下載';
     setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 2500);
   } catch (e) {
     console.warn(e);
+    document.querySelector('.pdf-hold')?.remove();
     btn.textContent = `下載失敗：${e.message}`;
     setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 4000);
   }
