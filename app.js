@@ -1851,7 +1851,8 @@ async function personPlaces(person, typed, center, km, country) {
     .filter((p) => !km || p.dist <= km * 1050);
   // 中文、日文同一個地方只留一個（優先中文）
   const zh = places.filter((p) => p.lang === 'zh');
-  places = [...zh, ...places.filter((p) => p.lang !== 'zh' && !zh.some((z) => distM(z.loc, p.loc) < 150))];
+  const kanji = (t) => stripParen(t).replace(/浜/g, '濱').replace(/県/g, '縣').replace(/沢/g, '澤').replace(/竜/g, '龍').replace(/国/g, '國').replace(/広/g, '廣').replace(/桜/g, '櫻').replace(/駅/g, '站').replace(/神社$/, '神社');
+  places = [...zh, ...places.filter((p) => p.lang !== 'zh' && !zh.some((z) => distM(z.loc, p.loc) < 150 || (distM(z.loc, p.loc) < 600 && nameMatch(kanji(p.title), kanji(z.show)))))];
   return places.sort((a, b) => b.score - a.score || a.dist - b.dist).slice(0, 12);
 }
 
@@ -1863,14 +1864,15 @@ async function fullText(lang, title) {
 }
 async function whyVisit(place, aliases, personText) {
   const text = await fullText(place.lang, place.title).catch(() => '');
-  let hits = splitSentences(text).filter((s) => aliases.some((a) => a && s.includes(a)));
+  const real = (s) => /[。！？!?]$/.test(s) || s.length > 40;
+  let hits = splitSentences(text).filter((s) => real(s) && aliases.some((a) => a && s.includes(a)));
   let from = 'place';
   if (!hits.length && personText) {
     const pn = stripParen(place.show);
-    hits = splitSentences(personText).filter((s) => s.includes(pn) || s.includes(stripParen(place.title)));
+    hits = splitSentences(personText).filter((s) => real(s) && (s.includes(pn) || s.includes(stripParen(place.title))));
     from = 'person';
   }
-  const why = hits.slice(0, 3).map((s) => (s.length > 170 ? `${s.slice(0, 170)}…` : s)).join('');
+  const why = hits.slice(0, 2).map((s) => (s.length > 150 ? `${s.slice(0, 150)}…` : s)).join('');
   return { why, from };
 }
 
@@ -1975,7 +1977,7 @@ async function personSearch() {
     const ja = list.filter((p) => p.lang !== 'zh');
     if (ja.length) {
       const tr = await translateMany(ja.flatMap((p) => [p.label, p.why || '']), 'ja');
-      if (tr) ja.forEach((p, k) => { p.labelZh = tr[k * 2]; p.why = tr[k * 2 + 1] || p.why; });
+      if (tr) ja.forEach((p, k) => { p.labelZh = tr[k * 2]; if (p.why && tr[k * 2 + 1]) { p.why = tr[k * 2 + 1]; p.translated = true; } });
     }
     // 有故事的排前面
     list.sort((a, b) => (b.why ? 1 : 0) - (a.why ? 1 : 0) || b.score - a.score || a.dist - b.dist);
@@ -1991,7 +1993,7 @@ async function personSearch() {
           </div></div>
           <div class="detail"><h4>🔎 為什麼要去</h4>
             <div class="story">${p.why ? esc(p.why) : '條目裡沒有直接寫到他，但這裡跟他有關聯。按「深入閱讀」看看完整介紹。'}</div>
-            ${p.why && p.from === 'person' ? `<div class="small">（摘自${esc(pName)}的生平條目）</div>` : ''}${p.lang !== 'zh' && p.why ? '<div class="small">（日文維基百科，Google 自動翻譯）</div>' : ''}
+            ${p.why && p.from === 'person' ? `<div class="small">（摘自${esc(pName)}的生平條目）</div>` : ''}${p.lang !== 'zh' && p.why ? `<div class="small">（日文維基百科${p.translated ? '，Google 自動翻譯' : '；在 Google Cloud 啟用 Cloud Translation API 後會自動翻成中文'}）</div>` : ''}
             <div class="actions">
               <button type="button" class="go-btn" data-pgo="${k}">帶我去 ➜</button>
               <button type="button" class="ghost-btn" data-deep="${esc(p.lang)}|${esc(p.title)}">📖 深入閱讀</button>
