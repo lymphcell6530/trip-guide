@@ -1867,11 +1867,13 @@ const FOUND_KW = /(創建|创建|始建|建於|建于|興建|兴建|創立|创�
 function foundYear(text) {
   const ok = (y) => y >= 400 && y <= 2100;
   for (const s of splitSentences(text.slice(0, 3000))) {
-    if (!FOUND_KW.test(s)) continue;
-    const m = s.match(/(\d{3,4})\s*年/);
-    if (m && ok(+m[1])) return +m[1];
+    // 「列入世界遺產、重建、修復」這類句子的年份不是創建年
+    if (!FOUND_KW.test(s) || /(世界遺產|世界遺産|世界文化遺產|登錄|登録|列入|指定|修復|修理|重建|再建|復元|復原|改建|解体|焼失|燒毀)/.test(s)) continue;
+    const ys = [...s.matchAll(/(\d{3,4})\s*年/g)].map((m) => +m[1]).filter(ok);
+    if (ys.length) return Math.min(...ys);
   }
-  const ys = [...text.slice(0, 1200).matchAll(/(\d{3,4})\s*年/g)].map((m) => +m[1]).filter(ok);
+  const ys = splitSentences(text.slice(0, 1500)).filter((x) => !/(世界遺產|世界遺産|登錄|登録|列入|指定|修復|重建|再建)/.test(x))
+    .flatMap((x) => [...x.matchAll(/(\d{3,4})\s*年/g)].map((m) => +m[1])).filter(ok);
   return ys.length ? Math.min(...ys) : null;
 }
 
