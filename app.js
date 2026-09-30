@@ -1774,6 +1774,8 @@ document.addEventListener('click', (e) => {
 });
 
 // ---------- 👤 人物：找跟歷史人物有關、可以參觀的地方，並說明為什麼要去 ----------
+const SHIN = { 樣: '様', 禪: '禅', 佛: '仏', 廣: '広', 國: '国', 龍: '竜', 寶: '宝', 藝: '芸', 圖: '図', 會: '会', 舊: '旧', 聖: '聖', 傳: '伝', 屬: '属', 關: '関', 靜: '静', 燈: '灯', 齋: '斎', 條: '条', 臺: '台', 澤: '沢', 濱: '浜', 縣: '県', 醫: '医', 學: '学', 體: '体', 樓: '楼', 權: '権', 戰: '戦', 驛: '駅', 將: '将', 軍: '軍', 殿: '殿', 門: '門', 樂: '楽', 豐: '豊', 繪: '絵', 様: '様' };
+const toShinjitai = (t) => String(t || '').replace(/./g, (c) => SHIN[c] || c);
 const stripParen = (t) => String(t || '').replace(/\s*[（(].*?[)）]\s*$/, '');
 const SKIP_PLACE = /(爭議|争議|事件|選舉|選区|選區|列表|一覧|年表|電視台|电视台|放送|テレビ|ラジオ|新聞|株式会社|有限公司|球場|スタジアム|世界遺產|世界遺産|古跡$|古蹟$|構成資産|地區的|地域の)/;
 
@@ -1831,7 +1833,9 @@ async function personPlaces(person, typed, center, km, country) {
   });
   const langs = [];
   if (person.zh) langs.push(['zh', person.zh, typed]);
-  if (person.ja && (country === 'JP' || !person.zh || !km)) langs.push(['ja', person.ja, stripParen(person.ja)]);
+  const jaTerm = person.ja || (country === 'JP' ? toShinjitai(typed) : null);
+  if (jaTerm && (country === 'JP' || !person.zh || !km)) langs.push(['ja', person.ja || jaTerm, stripParen(person.ja ? person.ja : jaTerm)]);
+  if (country === 'JP' && person.ja && toShinjitai(typed) !== stripParen(person.ja)) langs.push(['ja', toShinjitai(typed), toShinjitai(typed)]);
   for (const [lang, title, q] of langs) {
     const [a, b] = await Promise.all([
       wikiSearchTitles(lang, `"${stripParen(q)}"${near}`),
@@ -2083,17 +2087,17 @@ async function personSearch() {
       const name = person.lang === 'zh' ? stripParen(person.show) : stripParen(person.title);
       persons.push({
         ...person, typed: names[i], name, introZh: intro,
-        aliases: [...new Set([names[i], name, stripParen(person.zh), stripParen(person.ja)].filter((a) => a && a.length >= 2))],
+        aliases: [...new Set([names[i], toShinjitai(names[i]), name, stripParen(person.zh), stripParen(person.ja)].filter((a) => a && a.length >= 2))],
       });
     }
     const missing = names.filter((n, i) => !found[i]);
-    if (!persons.length) { box.innerHTML = '<div class="empty">維基百科上找不到這些人物，換個寫法試試看（例如全名）。</div>'; return; }
+    if (!persons.length) { box.innerHTML = '<div class="empty">維基百科上找不到這些人物或主題，換個寫法試試看。</div>'; return; }
     const who = persons.map((p) => p.name).join('、');
     const head = persons.map((p) => `<div class="card"><div class="card-head" style="cursor:default">
         ${p.thumb ? `<img class="thumb" src="${esc(p.thumb)}" alt="">` : '<div class="thumb"></div>'}
         <div class="card-body"><h3>👤 ${esc(p.name)}</h3><p class="desc">${esc(p.introZh.length > (persons.length > 1 ? 110 : 220) ? `${p.introZh.slice(0, persons.length > 1 ? 110 : 220)}…` : p.introZh)}</p>
-        <div class="actions"><button type="button" class="ghost-btn" data-deep="${esc(p.lang)}|${esc(p.title)}">📖 生平</button></div></div></div></div>`).join('')
-      + (missing.length ? `<div class="small" style="padding:4px">找不到：${esc(missing.join('、'))}（換個寫法試試看）</div>` : '');
+        <div class="actions"><button type="button" class="ghost-btn" data-deep="${esc(p.lang)}|${esc(p.title)}">📖 詳細介紹</button></div></div></div></div>`).join('')
+      + (missing.length ? `<div class="small" style="padding:4px">找不到：${esc(missing.join('、'))}（換個寫法試試看，例如全名或常見名稱）</div>` : '');
     box.innerHTML = `${head}<div class="empty">正在找${esc(center.name)}附近跟${esc(who)}有關的地方…</div>`;
     const country = guessCountry(center.loc) || S.country;
     const lists = await Promise.all(persons.map((p) => personPlaces(p, p.typed, center.loc, km, country).catch(() => [])));
@@ -2131,6 +2135,18 @@ async function personSearch() {
       const tr = await translateMany(ja.flatMap((p) => [p.label, p.why || '']), 'ja');
       if (tr) ja.forEach((p, k) => { p.labelZh = tr[k * 2]; if (p.why && tr[k * 2 + 1]) { p.why = tr[k * 2 + 1]; p.translated = true; } });
     }
+    // 年代範圍（可不填）
+    const y1 = +$('#yearFrom')?.value || 0, y2 = +$('#yearTo')?.value || 0;
+    if (y1 || y2) {
+      const before = list.length;
+      list = list.filter((p) => p.year && (!y1 || p.year >= y1) && (!y2 || p.year <= y2));
+      if (!list.length) {
+        box.innerHTML = `${head}<div class="empty">找到 ${before} 個相關的地方，但沒有 ${y1 || ''}～${y2 || ''} 年建造的。把年代範圍放寬或清空試試看。</div>`;
+        drawPersonMarkers([]);
+        return;
+      }
+      S.planOrder = 'year';
+    }
     list.sort((a, b) => (b.why ? 1 : 0) - (a.why ? 1 : 0) || b.who.length - a.who.length || b.score - a.score || a.dist - b.dist);
     S.personList = list;
     S.personCenterNow = center;
@@ -2153,7 +2169,7 @@ async function personSearch() {
               <button type="button" class="ghost-btn" data-skip="${esc(p.title)}">✕ 不去</button>
             </div></div></article>`).join('')}
       ${itineraryHtml()}
-      <div class="small" style="padding:8px 4px">資料來源：維基百科。故事是從條目裡「提到這些人物」的句子整理出來的；年份取自條目開頭，僅供參考。</div>`;
+      <div class="small" style="padding:8px 4px">資料來源：維基百科。說明是從條目裡「提到這些人物／主題」的句子整理出來的；年份取自條目裡創建、興建那一句，僅供參考。</div>`;
     renderPlan();
   } catch (e) {
     console.warn(e);

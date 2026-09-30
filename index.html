@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=39">
+  <link rel="stylesheet" href="style.css?v=42">
 </head>
 <body>
   <header class="topbar">
@@ -41,7 +41,7 @@
       <nav class="tabs">
         <button class="tab active" data-tab="sights">🏯 景點</button>
         <button class="tab" data-tab="food">🍜 美食</button>
-        <button class="tab" data-tab="person">👤 人物</button>
+        <button class="tab" data-tab="person">🏛 主題</button>
         <button class="tab" data-tab="go">🚌 我要去</button>
         <button class="tab" data-tab="route" id="tabRoute" disabled>🧭 路線</button>
       </nav>
@@ -63,9 +63,9 @@
       <div id="route-view" class="list hidden"></div>
       <div id="person-view" class="list hidden">
         <form id="personForm" class="go-form" autocomplete="off">
-          <div class="small">輸入歷史人物（可以一次輸入好幾個，用「、」分開），找附近跟他們有關、可以參觀的地方，告訴你為什麼要去，還能照年代把故事串成一條路線。</div>
+          <div class="small">輸入<b>歷史人物</b>、<b>建築風格</b>或<b>時代</b>（可以一次輸入好幾個，用「、」分開），找附近相關、可以參觀的地方，告訴你為什麼要去，還能照年代串成一條路線。</div>
           <div class="row">
-            <input id="personQuery" type="search" placeholder="例如：鄭成功；多個人用「、」分開：聖德太子、聖武天皇、鑑真" enterkeyhint="search">
+            <input id="personQuery" type="search" placeholder="例：聖德太子、鑑真／和樣、禪宗樣、大佛樣／巴洛克、日治時期" enterkeyhint="search">
             <button type="submit" class="chip primary">找景點</button>
           </div>
           <div class="row">
@@ -81,7 +81,11 @@
               <option value="0">不限範圍（看他的足跡）</option>
             </select>
           </div>
-          <input id="personPlace" type="search" class="hidden" placeholder="以哪裡為中心？例如：台南、京都、高知">
+          <input id="personPlace" type="search" class="hidden" placeholder="以哪裡為中心？例如：台南、京都、奈良">
+          <div class="row year-row"><span class="small">年代（可不填）</span>
+            <input id="yearFrom" type="number" inputmode="numeric" placeholder="從 例：700">
+            <span class="small">～</span>
+            <input id="yearTo" type="number" inputmode="numeric" placeholder="到 例：800"></div>
         </form>
         <div id="personResults"></div>
       </div>
@@ -160,6 +164,6 @@
     <div id="wrBody" class="reader-body"></div>
   </dialog>
 
-  <script src="app.js?v=41"></script>
+  <script src="app.js?v=42"></script>
 </body>
 </html>
