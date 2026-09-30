@@ -914,7 +914,7 @@ async function japanOptions(from, dest) {
         color, textColor: '#ffffff', agency: t.company?.name || '',
         from: pname(secs[k - 1]), to: pname(secs[k + 1]),
         dep: s.from_time ? new Date(s.from_time) : null, arr: s.to_time ? new Date(s.to_time) : null,
-        headsign: t.links?.[0]?.destination?.name || '', stops: null, sec: (s.time || 0) * 60, fare: yen(t.fare),
+        headsign: t.links?.[t.links.length - 1]?.destination?.name || '', stops: null, sec: (s.time || 0) * 60, fare: yen(t.fare),
       });
     });
     const m = it.summary?.move || {};
