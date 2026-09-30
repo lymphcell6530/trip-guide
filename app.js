@@ -922,7 +922,11 @@ async function japanOptions(from, dest) {
     const leaveBy = m.from_time ? new Date(m.from_time) : null;
     const arrive = m.to_time ? new Date(m.to_time) : new Date(Date.now() + (m.time || 0) * 60000);
     return {
-      sec: (m.time || 0) * 60, arrive, leaveBy, fare: yen(m.fare),
+      sec: (m.time || 0) * 60, arrive, leaveBy,
+      // 最上面顯示「全程總價」（含特急券），細節放在每一段
+      fare: m.reference_fare?.lowest_total_ticket
+        ? `合計 ¥${m.reference_fare.lowest_total_ticket}${m.reference_fare.lowest_total_ic && m.reference_fare.lowest_total_ic !== m.reference_fare.lowest_total_ticket ? `（IC 卡 ¥${m.reference_fare.lowest_total_ic}）` : ''}`
+        : yen(m.fare),
       transfers: m.transit_count ?? Math.max(0, transits.length - 1),
       walkSec: segs.filter((g) => g.type === 'walk').reduce((a, g) => a + g.sec, 0),
       segs, first: transits[0], path,
