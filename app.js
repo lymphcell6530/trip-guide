@@ -2337,6 +2337,268 @@ async function buildPdf(btn) {
   }
 }
 
+// ---------- ✈️ 我在機場：查航班登機門，並指出從你的位置到登機門的方向 ----------
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+const allAirports = () => ['TW', 'JP'].flatMap((cc) => AIRPORTS[cc].map(([code, name, lat, lng]) => ({ code, name, cc, loc: { lat, lng } })));
+const DIR8 = ['北', '東北', '東', '東南', '南', '西南', '西', '西北'];
+
+function bearing(a, b) {
+  const r = Math.PI / 180;
+  const y = Math.sin((b.lng - a.lng) * r) * Math.cos(b.lat * r);
+  const x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lng - a.lng) * r);
+  return (Math.atan2(y, x) / r + 360) % 360;
+}
+const dirText = (deg) => DIR8[Math.round(deg / 45) % 8];
+
+function nearestAirport(loc, maxKm = 6) {
+  if (!loc) return null;
+  const list = allAirports().map((a) => ({ ...a, km: distM(loc, a.loc) / 1000 })).sort((a, b) => a.km - b.km);
+  return list[0] && list[0].km <= maxKm ? list[0] : null;
+}
+
+function paintFlightAirports() {
+  const sel = $('#flightAp');
+  if (!sel) return;
+  const here = nearestAirport(S.gps || S.origin, 8);
+  const list = allAirports();
+  sel.innerHTML = list.map((a) => `<option value="${a.code}"${here && here.code === a.code ? ' selected' : ''}>${esc(a.name)}（${a.code}）${a.cc === 'JP' ? '・日本' : ''}</option>`).join('');
+}
+
+// 機場附近時，畫面上方提醒可以查登機門
+function paintAirportBanner() {
+  const el = $('#airportBanner');
+  if (!el) return;
+  const ap = nearestAirport(S.gps, 4);
+  el.classList.toggle('hidden', !ap);
+  if (ap) el.innerHTML = `✈️ 你在${esc(ap.name)}附近　<button type="button" class="chip" data-openflight="1">查航班登機門 ›</button>`;
+}
+
+async function fidsFind(ap, al, num) {
+  const pick = (rows) => (rows || []).filter((r) => r.AirlineID === al && String(r.FlightNumber).replace(/^0+/, '') === num);
+  const [dep, arr] = await Promise.all([
+    tdxGet(`/v2/Air/FIDS/Airport/Departure/${ap}`, { $filter: `AirlineID eq '${al}'` }).catch(() => []),
+    tdxGet(`/v2/Air/FIDS/Airport/Arrival/${ap}`, { $filter: `AirlineID eq '${al}'` }).catch(() => []),
+  ]);
+  const near = (rows, key) => rows.sort((a, b) => Math.abs(new Date(a[key]) - Date.now()) - Math.abs(new Date(b[key]) - Date.now()))[0];
+  const d = near(pick(dep), 'ScheduleDepartureTime');
+  if (d) return { kind: 'dep', r: d };
+  const a = near(pick(arr), 'ScheduleArrivalTime');
+  return a ? { kind: 'arr', r: a } : null;
+}
+
+async function osmGates(ap) {
+  const key = `gates:${ap.code}`;
+  try {
+    const c = JSON.parse(localStorage.getItem(key) || 'null');
+    if (c && c.t > Date.now() - 7 * 864e5 && c.g.length) return c.g;
+  } catch {}
+  const q = `[out:json][timeout:25];(node["aeroway"="gate"](around:5000,${ap.loc.lat},${ap.loc.lng});way["aeroway"="gate"](around:5000,${ap.loc.lat},${ap.loc.lng}););out center tags;`;
+  for (let round = 0; round < 2; round++) {
+    for (const ep of OVERPASS) {
+      try {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 25000);
+        const r = await fetch(`${ep}?data=${encodeURIComponent(q)}`, { signal: ctl.signal });
+        clearTimeout(timer);
+        if (!r.ok) continue;
+        const d = await r.json();
+        const g = (d.elements || []).filter((e) => e.tags?.ref).map((e) => ({
+          ref: e.tags.ref, terminal: e.tags.terminal || e.tags['aeroway:terminal'] || '',
+          loc: { lat: e.lat ?? e.center?.lat, lng: e.lon ?? e.center?.lon },
+        }));
+        try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), g })); } catch {}
+        return g;
+      } catch (e) { console.warn('overpass', ep, e); }
+    }
+  }
+  return [];
+}
+
+const gateNorm = (s) => String(s || '').toUpperCase().replace(/\s+/g, '').replace(/^([A-Z]*)0+(\d)/, '$1$2');
+function findGate(gates, ref, terminal, me) {
+  const hits = gates.filter((g) => gateNorm(g.ref) === gateNorm(ref) || gateNorm(g.ref).split(/[;,/]/).includes(gateNorm(ref)));
+  if (!hits.length) return null;
+  const t = hits.filter((g) => terminal && String(g.terminal).includes(String(terminal)));
+  const pool = t.length ? t : hits;
+  return me ? pool.reduce((a, b) => (distM(a.loc, me) < distM(b.loc, me) ? a : b)) : pool[0];
+}
+
+const timeOf = (s) => (s ? String(s).slice(11, 16) : '');
+async function flightSearch() {
+  const box = $('#flightResult');
+  const raw = $('#flightNo').value.trim().toUpperCase();
+  const m = raw.match(/^([A-Z0-9]{2})\s*-?\s*0*(\d{1,4})[A-Z]?$/);
+  if (!m) { box.innerHTML = '<div class="empty">航班號碼格式像這樣：IT284、CI 166、BR181、MM031</div>'; return; }
+  const [, al, num] = m;
+  const ap = allAirports().find((a) => a.code === $('#flightAp').value);
+  $('#flightNo').blur();
+  const label = `${AIRLINE_ZH[al] || al} ${al}${num}`;
+  const gLink = `https://www.google.com/search?q=${encodeURIComponent(`${al}${num} flight status`)}`;
+  if (ap.cc !== 'TW') {
+    S.flight = null;
+    box.innerHTML = `<div class="card"><div class="detail"><h4>✈️ ${esc(label)}・${esc(ap.name)}</h4>
+      <div>日本的機場沒有開放的官方資料可以查登機門。按下面按鈕會打開這個航班的即時狀態，通常會顯示<b>航廈和登機門</b>。查到登機門號碼後，在下面輸入就能幫你指方向。</div>
+      <div class="actions"><a class="go-btn" style="text-decoration:none" href="${esc(gLink)}" target="_blank" rel="noopener">查 ${esc(al + num)} 的登機門 ➜</a></div>
+      <div class="row" style="margin-top:10px"><input id="gateManual" type="text" placeholder="登機門號碼，例如 51、C5" autocapitalize="characters"><button type="button" class="chip primary" data-gatego="${ap.code}">帶我去登機門</button></div></div></div>`;
+    return;
+  }
+  if (!tdxReady()) { box.innerHTML = '<div class="empty">查台灣機場的航班要先在 ⚙️ 設定 TDX 金鑰。</div>'; return; }
+  box.innerHTML = '<div class="empty">🛰️ 查詢官方航班資料…</div>';
+  try {
+    const f = await fidsFind(ap.code, al, num);
+    if (!f) {
+      box.innerHTML = `<div class="card"><div class="detail"><h4>✈️ ${esc(label)}</h4><div>${esc(ap.name)}今天的官方航班資料裡找不到這個航班。請確認航班號碼和機場，或用下面按鈕查。</div>
+        <div class="actions"><a class="ghost-btn" href="${esc(gLink)}" target="_blank" rel="noopener">Google 航班狀態</a></div></div></div>`;
+      return;
+    }
+    const r = f.r, dep = f.kind === 'dep';
+    const other = dep ? r.ArrivalAirportID : r.DepartureAirportID;
+    const otherName = allAirports().find((a) => a.code === other)?.name || other;
+    const sch = dep ? r.ScheduleDepartureTime : r.ScheduleArrivalTime;
+    const est = dep ? r.EstimatedDepartureTime : r.EstimatedArrivalTime;
+    const act = dep ? r.ActualDepartureTime : r.ActualArrivalTime;
+    const remark = dep ? r.DepartureRemark : r.ArrivalRemark;
+    const counter = r.CheckCounter || r.CheckInCounter || r.Counter || '';
+    const schD = sch ? new Date(sch) : null;
+    const boardBy = dep && schD ? new Date(schD.getTime() - 30 * 60000) : null;
+    S.flight = { ap, gate: r.Gate, terminal: r.Terminal, label };
+    box.innerHTML = `<div class="card"><div class="detail">
+      <h4>✈️ ${esc(label)}　${dep ? `${esc(ap.name)} → ${esc(otherName)}` : `${esc(otherName)} → ${esc(ap.name)}`}</h4>
+      <div class="flight-grid">
+        <div><span class="small">${dep ? '表定起飛' : '表定抵達'}</span><b>${timeOf(sch)}</b></div>
+        ${est && timeOf(est) !== timeOf(sch) ? `<div><span class="small">預計</span><b class="live soon">${timeOf(est)}</b></div>` : ''}
+        ${act ? `<div><span class="small">實際</span><b>${timeOf(act)}</b></div>` : ''}
+        <div><span class="small">航廈</span><b>${esc(r.Terminal || '—')}</b></div>
+        <div><span class="small">登機門</span><b class="gate-no">${esc(r.Gate || '尚未公布')}</b></div>
+        ${counter ? `<div><span class="small">報到櫃台</span><b>${esc(counter)}</b></div>` : ''}
+      </div>
+      ${remark ? `<div style="margin-top:6px">狀態：<b class="live${/延|取消|Delay|Cancel/i.test(remark) ? ' soon' : ''}">${esc(remark)}</b></div>` : ''}
+      ${boardBy ? `<div class="small" style="margin-top:4px">建議 <b>${hhmm(boardBy)}</b> 前到登機門（國際線通常起飛前 30～40 分鐘開始登機，以登機證為準）</div>` : ''}
+      <div class="actions">
+        ${r.Gate ? `<button type="button" class="go-btn" data-gatego="${ap.code}">🧭 帶我去登機門 ${esc(r.Gate)}</button>` : '<span class="small">登機門還沒公布，通常起飛前 1～2 小時會公布，稍後再查一次。</span>'}
+        <button type="button" class="ghost-btn" data-flightrefresh="1">🔄 重新查詢</button>
+      </div>
+      <div id="gateView"></div>
+      <div class="small">資料來源：交通部 TDX 機場即時航班（每幾分鐘更新）。</div></div></div>`;
+  } catch (e) {
+    console.warn(e);
+    box.innerHTML = `<div class="empty">查詢失敗：${esc(e.message)}</div>`;
+  }
+}
+
+function stopGate() {
+  clearInterval(S.gateTimer);
+  if (S.gateLine) S.gateLine.setMap(null);
+  if (S.gateMarker) S.gateMarker.map = null;
+}
+
+async function gateGo(apCode, gateRef, terminal) {
+  const ap = allAirports().find((a) => a.code === apCode);
+  const view = $('#gateView') || $('#flightResult');
+  view.innerHTML = '<div class="small">📍 找登機門的位置…</div>';
+  stopGate();
+  const me = S.gps || S.origin;
+  const gates = await osmGates(ap);
+  const g = findGate(gates, gateRef, terminal, me);
+  if (!g) {
+    const q = new URLSearchParams({ api: '1', query: `${ap.name} Gate ${gateRef}` });
+    view.innerHTML = `<div class="small" style="margin-top:8px">開放地圖上沒有${esc(ap.name)}登機門 ${esc(gateRef)} 的位置資料。請跟著機場內「Gate ${esc(gateRef)}」的指標走，或<a href="https://www.google.com/maps/search/?${q}" target="_blank" rel="noopener">用 Google 地圖找</a>。</div>`;
+    return;
+  }
+  S.gateTarget = { ...g, ap, ref: gateRef };
+  if (S.map) {
+    S.gateMarker = new S.gm.AdvancedMarkerElement({ map: S.map, position: g.loc, content: pin('🛫', '#0f766e'), title: `登機門 ${gateRef}` });
+    S.gateLine = new google.maps.Polyline({ map: S.map, path: [me || g.loc, g.loc], strokeColor: '#0f766e', strokeOpacity: 0, icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: '12px' }] });
+    const b = new google.maps.LatLngBounds(); b.extend(g.loc); if (me) b.extend(me);
+    S.map.fitBounds(b, 60);
+    if (!me || distM(me, g.loc) < 30) S.map.setZoom(18);
+  }
+  const q = new URLSearchParams({ api: '1', destination: `${g.loc.lat},${g.loc.lng}`, travelmode: 'walking' });
+  view.innerHTML = `<div class="gate-panel">
+      <div class="compass"><div class="compass-n">北</div><div id="gateArrow" class="compass-arrow">➤</div></div>
+      <div class="gate-info" id="gateInfo"></div>
+    </div>
+    <div class="actions">
+      <button type="button" class="chip" data-compass="1">🧭 開啟指南針（箭頭跟著手機轉）</button>
+      <a class="ghost-btn" href="https://www.google.com/maps/dir/?${q}" target="_blank" rel="noopener">Google 地圖步行導航</a>
+      <button type="button" class="ghost-btn" data-gatemap="1">在地圖上看</button>
+    </div>
+    <div class="small">機場室內 GPS 誤差可能有幾十公尺，箭頭是大方向，請同時跟著「Gate ${esc(gateRef)}」的指標走。</div>`;
+  updateGate();
+  S.gateTimer = setInterval(updateGate, 3000);
+}
+
+function updateGate() {
+  const t = S.gateTarget;
+  const info = $('#gateInfo');
+  if (!t || !info) { clearInterval(S.gateTimer); return; }
+  const me = S.gps || S.origin;
+  if (!me) { info.innerHTML = '還沒拿到你的位置…'; return; }
+  const d = distM(me, t.loc), br = bearing(me, t.loc);
+  S.gateBearing = br;
+  if (S.gateLine) S.gateLine.setPath([me, t.loc]);
+  info.innerHTML = d < 25
+    ? `<b>🎉 已經到登機門 ${esc(t.ref)} 附近了</b>`
+    : `登機門 <b>${esc(t.ref)}</b>${t.terminal ? `（${esc(t.terminal)}）` : ''}<br>往 <b>${dirText(br)}方</b> 約 <b>${fmtDist(d)}</b><br>走路約 ${fmtDur((d * 1.4) / 1.2)}`;
+  turnArrow();
+}
+
+function turnArrow() {
+  const a = $('#gateArrow');
+  if (!a || S.gateBearing == null) return;
+  // 有指南針：箭頭＝目標方位－手機朝向；沒有：以北為上
+  const deg = S.heading != null ? S.gateBearing - S.heading : S.gateBearing;
+  a.style.transform = `rotate(${deg - 90}deg)`;
+  const n = $('.compass-n');
+  if (n) n.style.transform = S.heading != null ? `rotate(${-S.heading}deg)` : 'none';
+}
+
+function startCompass(btn) {
+  const handler = (e) => {
+    let h = null;
+    if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;
+    else if (e.absolute && e.alpha != null) h = 360 - e.alpha;
+    if (h == null) return;
+    S.heading = h;
+    turnArrow();
+  };
+  const on = () => {
+    window.addEventListener('deviceorientationabsolute', handler, true);
+    window.addEventListener('deviceorientation', handler, true);
+    btn.textContent = '🧭 指南針已開啟：手機拿平，箭頭指向登機門';
+  };
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission().then((s) => (s === 'granted' ? on() : (btn.textContent = '沒有開啟指南針權限'))).catch(() => (btn.textContent = '沒有開啟指南針權限'));
+  } else on();
+}
+
+$('#go-view')?.addEventListener('click', (e) => {
+  if (e.target.closest('#btnFlight')) { $('#flightForm').classList.toggle('hidden'); paintFlightAirports(); $('#flightNo').focus(); return; }
+  const gg = e.target.closest('[data-gatego]');
+  if (gg) {
+    const ref = $('#gateManual')?.value.trim() || S.flight?.gate;
+    if (!ref) return;
+    gateGo(gg.dataset.gatego, ref, S.flight?.terminal);
+    return;
+  }
+  if (e.target.closest('[data-flightrefresh]')) { flightSearch(); return; }
+  if (e.target.closest('[data-compass]')) { startCompass(e.target.closest('[data-compass]')); return; }
+  if (e.target.closest('[data-gatemap]')) {
+    document.body.classList.remove('list-full');
+    if (S.map && S.gateTarget) { S.map.panTo(S.gateTarget.loc); S.map.setZoom(18); }
+    $('#map').scrollIntoView({ behavior: 'smooth' });
+  }
+});
+$('#flightForm')?.addEventListener('submit', (e) => { e.preventDefault(); flightSearch(); });
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('[data-openflight]')) return;
+  switchTab('go');
+  $('#flightForm').classList.remove('hidden');
+  paintFlightAirports();
+  $('#flightNo').focus();
+});
+setInterval(paintAirportBanner, 15000);
+
 // ---------- 通知 ----------
 function notify(title, body) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;

@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=48">
+  <link rel="stylesheet" href="style.css?v=50">
 </head>
 <body>
   <header class="topbar">
@@ -28,6 +28,7 @@
 
   <div id="status" class="status">正在取得你的位置…</div>
   <div id="placeRow" class="place-row hidden"></div>
+  <div id="airportBanner" class="airport-banner hidden"></div>
 
   <main class="layout">
     <section class="map-wrap">
@@ -90,6 +91,17 @@
         <div id="personResults"></div>
       </div>
       <div id="go-view" class="list hidden">
+        <div class="flight-box">
+          <button type="button" id="btnFlight" class="chip">✈️ 我在機場：查航班登機門 ›</button>
+          <form id="flightForm" class="go-form hidden" autocomplete="off">
+            <div class="row">
+              <input id="flightNo" type="search" placeholder="航班號碼，例如 IT284、CI166、BR181" autocapitalize="characters" enterkeyhint="search">
+              <button type="submit" class="chip primary">查登機門</button>
+            </div>
+            <div class="row"><select id="flightAp"></select></div>
+          </form>
+          <div id="flightResult"></div>
+        </div>
         <form id="goForm" class="go-form" autocomplete="off">
           <div class="small">從<b id="goFrom">你目前的位置</b>出發，要去哪裡？</div>
           <div class="row">
@@ -164,6 +176,6 @@
     <div id="wrBody" class="reader-body"></div>
   </dialog>
 
-  <script src="app.js?v=49"></script>
+  <script src="app.js?v=50"></script>
 </body>
 </html>
