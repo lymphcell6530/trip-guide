@@ -1249,7 +1249,7 @@ $('#go-view')?.addEventListener('click', (e) => {
   const rec = e.target.closest('[data-recent]');
   if (rec) { planTrip(loadRecent()[+rec.dataset.recent]); return; }
   const m = e.target.closest('[data-optmap]');
-  if (m) { showOptionOnMap(+m.dataset.optmap, m.closest('[data-optholder]')); $('#map').scrollIntoView({ behavior: 'smooth' }); return; }
+  if (m) { showOptionOnMap(+m.dataset.optmap, m.closest('[data-optholder]')); openMap(); return; }
   const ab = e.target.closest('[data-ab]');
   if (ab) { runLeg3(); return; }
   const head = e.target.closest('[data-opt]');
@@ -2218,7 +2218,7 @@ $('#person-view')?.addEventListener('click', (e) => {
   if (m) {
     const p = S.personList[+m.dataset.pmap];
     if (S.map) { S.map.panTo(p.loc); S.map.setZoom(16); }
-    $('#map').scrollIntoView({ behavior: 'smooth' });
+    openMap();
   }
 });
 // 從深入閱讀的人物條目直接找相關景點
@@ -2586,7 +2586,7 @@ $('#go-view')?.addEventListener('click', (e) => {
   if (e.target.closest('[data-gatemap]')) {
     document.body.classList.remove('list-full');
     if (S.map && S.gateTarget) { S.map.panTo(S.gateTarget.loc); S.map.setZoom(18); }
-    $('#map').scrollIntoView({ behavior: 'smooth' });
+    openMap();
   }
 });
 $('#flightForm')?.addEventListener('submit', (e) => { e.preventDefault(); flightSearch(); });
@@ -2738,15 +2738,34 @@ if ($('#btnPhone')) $('#btnPhone').onclick = async () => {
 };
 
 // 手機：地圖收起來，列表全螢幕
-$('#btnListFull')?.addEventListener('click', () => { document.body.classList.add('list-full'); save('listFull', '1'); });
-$('#btnShowMap')?.addEventListener('click', () => { document.body.classList.remove('list-full'); save('listFull', '0'); });
-if (load('listFull', '0') === '1') document.body.classList.add('list-full');
+// 手機：地圖平常收起來，按「🗺️ 地圖」才展開；點地圖以外的地方就收起
+function openMap() {
+  document.body.classList.add('map-open');
+  paintMapFab();
+}
+function closeMap() {
+  document.body.classList.remove('map-open');
+  paintMapFab();
+}
+function paintMapFab() {
+  const b = $('#btnMap');
+  if (b) b.textContent = document.body.classList.contains('map-open') ? '✕ 收起地圖' : '🗺️ 地圖';
+}
+$('#btnMap')?.addEventListener('click', () => (document.body.classList.contains('map-open') ? closeMap() : openMap()));
+document.addEventListener('pointerdown', (e) => {
+  if (!document.body.classList.contains('map-open')) return;
+  // 點地圖本身、地圖按鈕、或「在地圖上看」這類按鈕時不收
+  if (e.target.closest('.map-wrap, #btnMap, [data-pmap], [data-optmap], [data-gatemap], [data-mapopen]')) return;
+  closeMap();
+}, true);
+document.body.classList.remove('list-full');
+paintMapFab();
 
 // ---------- 輸入時：地圖收起來、格子放大；查詢後地圖再出現 ----------
 const TYPE_BOX = '.place-search input, .go-form input, #personPlace, #flightNo, #gateManual';
 function endTyping() { document.body.classList.remove('typing'); }
 document.addEventListener('focusin', (e) => {
-  if (e.target.matches?.(TYPE_BOX)) document.body.classList.add('typing');
+  if (e.target.matches?.(TYPE_BOX)) { document.body.classList.add('typing'); closeMap(); }
 });
 // 沒打字就離開格子：地圖馬上回來；有打字就等按下查詢
 document.addEventListener('focusout', (e) => {

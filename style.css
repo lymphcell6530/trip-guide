@@ -248,6 +248,21 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 /* 文字大小 */
 body.fs-l .panel, body.fs-l .place-search, body.fs-l .status, body.fs-l .place-row, body.fs-l .airport-banner { zoom: 1.15; }
 body.fs-xl .panel, body.fs-xl .place-search, body.fs-xl .status, body.fs-xl .place-row, body.fs-xl .airport-banner { zoom: 1.3; }
+/* 手機：地圖平常收起，按按鈕才展開 */
+.map-fab { display: none; }
+@media (max-width: 899px) {
+  .layout { grid-template-rows: 0 1fr; }
+  .map-wrap { visibility: hidden; }
+  body.map-open .layout { grid-template-rows: 46dvh 1fr; }
+  body.map-open .map-wrap { visibility: visible; }
+  body.typing.map-open .layout { grid-template-rows: 0 1fr; }
+  .map-fab {
+    display: block; position: fixed; right: 16px; bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 40;
+    border: 0; border-radius: 999px; padding: 14px 20px; font-size: 16px; font-weight: 700;
+    background: var(--accent); color: var(--on-accent); box-shadow: 0 6px 18px rgba(0,0,0,.35);
+  }
+  body.typing .map-fab { display: none; }
+}
 .yr { font-size: 12px; background: var(--warm-soft); color: var(--warm); border-radius: 999px; padding: 1px 8px; font-weight: 600; }
 .plan-why { margin: 2px 0 2px 2px; color: var(--muted); }
 .plan-total { background: var(--accent-soft); border-radius: 10px; padding: 8px 10px; margin-top: 8px; color: var(--ink); line-height: 1.6; }

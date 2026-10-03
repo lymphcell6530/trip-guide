@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=51">
+  <link rel="stylesheet" href="style.css?v=52">
 </head>
 <body>
   <header class="topbar">
@@ -34,11 +34,9 @@
     <section class="map-wrap">
       <div id="map"></div>
       <div class="map-hint">長按／點地圖可把「目前位置」改到那裡（規劃行程用）</div>
-      <button type="button" id="btnListFull" class="map-toggle">⬆ 全螢幕列表</button>
     </section>
 
     <section class="panel">
-      <button type="button" id="btnShowMap" class="show-map">🗺️ 顯示地圖</button>
       <nav class="tabs">
         <button class="tab active" data-tab="sights">🏯 景點</button>
         <button class="tab" data-tab="food">🍜 美食</button>
@@ -183,6 +181,8 @@
     <div id="wrBody" class="reader-body"></div>
   </dialog>
 
-  <script src="app.js?v=51"></script>
+  <button type="button" id="btnMap" class="map-fab">🗺️ 地圖</button>
+
+  <script src="app.js?v=52"></script>
 </body>
 </html>
