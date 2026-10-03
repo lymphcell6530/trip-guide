@@ -2749,7 +2749,7 @@ function closeMap() {
 }
 function paintMapFab() {
   const b = $('#btnMap');
-  if (b) b.textContent = document.body.classList.contains('map-open') ? '✕ 收起地圖' : '🗺️ 地圖';
+  if (b) b.classList.toggle('on', document.body.classList.contains('map-open'));
 }
 $('#btnMap')?.addEventListener('click', () => (document.body.classList.contains('map-open') ? closeMap() : openMap()));
 document.addEventListener('pointerdown', (e) => {
