@@ -2633,6 +2633,7 @@ async function findPlaces(q) {
 }
 
 function goToPlace(p) {
+  endTyping();
   $('#placeResults').classList.add('hidden');
   $('#placeQuery').value = p.name;
   $('#placeQuery').blur();
@@ -2685,6 +2686,7 @@ $('#btnSettings').onclick = () => {
   $('#moveThreshold').value = String(S.moveThreshold);
   $('#dwellSeconds').value = String(S.dwellSeconds);
   $('#notify').checked = S.notify;
+  if ($('#fontSize')) $('#fontSize').value = load('fontSize', '');
   if ($('#tdxId')) { $('#tdxId').value = S.tdxId; $('#tdxSecret').value = S.tdxSecret; }
   if ($('#rapidKey')) $('#rapidKey').value = S.rapidKey;
   $('#settings').showModal();
@@ -2695,6 +2697,7 @@ $('#settings').addEventListener('close', async () => {
   S.moveThreshold = +$('#moveThreshold').value; save('moveThreshold', S.moveThreshold);
   S.dwellSeconds = +$('#dwellSeconds').value; save('dwellSeconds', S.dwellSeconds);
   S.notify = $('#notify').checked; save('notify', S.notify ? '1' : '0');
+  if ($('#fontSize')) { save('fontSize', $('#fontSize').value); applyFontSize(); }
   if ($('#rapidKey')) { S.rapidKey = $('#rapidKey').value.trim(); save('rapidKey', S.rapidKey); }
   if ($('#tdxId')) {
     const id = $('#tdxId').value.trim(), sec = $('#tdxSecret').value.trim();
@@ -2738,6 +2741,35 @@ if ($('#btnPhone')) $('#btnPhone').onclick = async () => {
 $('#btnListFull')?.addEventListener('click', () => { document.body.classList.add('list-full'); save('listFull', '1'); });
 $('#btnShowMap')?.addEventListener('click', () => { document.body.classList.remove('list-full'); save('listFull', '0'); });
 if (load('listFull', '0') === '1') document.body.classList.add('list-full');
+
+// ---------- 輸入時：地圖收起來、格子放大；查詢後地圖再出現 ----------
+const TYPE_BOX = '.place-search input, .go-form input, #personPlace, #flightNo, #gateManual';
+function endTyping() { document.body.classList.remove('typing'); }
+document.addEventListener('focusin', (e) => {
+  if (e.target.matches?.(TYPE_BOX)) document.body.classList.add('typing');
+});
+// 沒打字就離開格子：地圖馬上回來；有打字就等按下查詢
+document.addEventListener('focusout', (e) => {
+  if (!e.target.matches?.(TYPE_BOX)) return;
+  setTimeout(() => {
+    if (document.activeElement?.matches?.(TYPE_BOX)) return;
+    if (!e.target.value.trim()) endTyping();
+  }, 150);
+});
+document.addEventListener('submit', () => setTimeout(endTyping, 50), true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { endTyping(); document.activeElement?.blur?.(); } });
+// 點分頁或其他按鈕（不是輸入格），也讓地圖回來
+document.addEventListener('click', (e) => {
+  if (document.body.classList.contains('typing') && e.target.closest('.tab, #btnShowMap, [data-hit], [data-gohit], [data-recent]')) endTyping();
+});
+
+// 文字大小（標準／大／特大）
+function applyFontSize() {
+  document.body.classList.remove('fs-l', 'fs-xl');
+  const v = load('fontSize', '');
+  if (v) document.body.classList.add(`fs-${v}`);
+}
+applyFontSize();
 
 // ---------- 啟動 ----------
 // 畫面（index.html）和程式（app.js）版本不一致時：清掉快取重新載入一次
