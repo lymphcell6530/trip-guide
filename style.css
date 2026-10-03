@@ -258,6 +258,10 @@ body.fs-xl .panel, body.fs-xl .place-search, body.fs-xl .status, body.fs-xl .pla
   body.map-open .map-wrap { visibility: visible; }
   body.typing.map-open .layout { grid-template-rows: 0 1fr; }
   .map-btn { display: inline-block; }
+  .topbar { gap: 6px; padding-left: 12px; padding-right: 12px; }
+  .brand { font-size: 15px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top-actions { gap: 4px; flex: none; }
+  .topbar .chip { padding: 6px 9px; font-size: 13px; }
 }
 .yr { font-size: 12px; background: var(--warm-soft); color: var(--warm); border-radius: 999px; padding: 1px 8px; font-weight: 600; }
 .plan-why { margin: 2px 0 2px 2px; color: var(--muted); }
